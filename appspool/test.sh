@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-# Reference & lot of the functionality is taken from: https://bash3boilerplate.sh/ && multiple online resources. 
-# Thanks to the community!!
+# Reference & Lot Of The Functionality Is Taken From: https://bash3boilerplate.sh/ && Multiple Online Resources. 
+# Thanks To The Community!!
 
 # Exit on error. Append "|| true" if you expect an error.
 set -o errexit
-# Exit on error inside any functions or subshells.
+# Exit On Error Inside Any Functions Or Subshells.
 set -o errtrace
-# Do not allow use of undefined vars. Use ${VAR:-} to use an undefined VAR
+# Do Not Allow Use Of Undefined Vars. Use ${VAR:-} To Use An Undefined VAR
 set -o nounset
-# Catch the error in case mysqldump fails (but gzip succeeds) in `mysqldump |gzip`
+# Catch The Error In Case Mysqldump Fails (But Gzip Succeeds) In `mysqldump |gzip`
 set -o pipefail
-# Turn on traces, useful while debugging but commented out by default
+# Turn On Traces, Useful While Debugging But Commented Out By Default
 # set -o xtrace
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
@@ -32,88 +32,89 @@ else
 fi
 
 
-# >>> Define container dictionaries for all variables used by the main script >>>
+# >>> Define Container Dictionaries For All Variables Used By The Main Script >>>
 ##############################################################################
-    unset PARAM_ENV_READ_ONLY RUN_ENV_READ_ONLY CONFIG_ENV CONFIG_ENV_REVISION_HISTORY
-    unset CONFIG_ENV_DEFAULTS_READ_ONLY VAR_ENV VAL_ENV
+    unset PARAM_ENV RUN_ENV CONFIG_ADD_ENV CONFIG_ENV_LINEAGE
+    unset CONFIG_DEFAULTS_ENV CONFIG_EVAL_LINEAGE VAR_ENV
     
-    # parameters passed to the script form the PARAM_ENV, this will be available for READ ONLY usage 
-    # in all sourced scripts and should not be changed in any of the sourced scripts
-    declare -A PARAM_ENV_READ_ONLY
-    # config values once set in RUN_ENV will not change till end, this will be available for READ ONLY usage
-    # in all sourced scripts and should not be changed in any of the sourced scripts
-    declare -A RUN_ENV_READ_ONLY
-    # Container for all configrations which can be set by the sourced config files. 
-    # Any configration that is set by the sourced files must be set using function: add2ConfigEnv "key.name" "value"
+    # Parameters Passed To The Script Form The PARAM_ENV, This Will Be Available For Read Only Usage 
+    # In All Sourced Scripts And Should Not Be Changed In Any Of The Sourced Scripts
+    declare -A PARAM_ENV
+    # Config Values Once Set In RUN_ENV Will Not Change Till End, This Will Be Available For READ ONLY Usage
+    # In All Sourced Scripts And Should Not Be Changed In Any Of The Sourced Scripts
+    declare -A RUN_ENV
+    # Container For All Configrations Which Can Be Set By The Sourced Config Files. 
+    # Any Configration That Is Set By The Sourced Files Must Be Set Using Function: add2ConfigEnv "key.name" "value"
+    declare -A CONFIG_ADD_ENV
+    # Env To Track From Where The Value Of A Particular Configration Is Being Picked Up
+    declare -A CONFIG_ENV_LINEAGE
+    # Run Env Which Are Needed But Are Not Supplied Will Be Picked From CONFIG_DEFAULTS_ENV.
+    # All Values Present In CONFIG_DEFAULTS_ENV Will Be Looked Up In CONFIG_ADD_ENV
+    # If The Value Is Not Found In CONFIG_ADD_ENV Then It Will Be Picked From CONFIG_DEFAULTS_ENV.
+    # This Will Be Available For Read Only Usage In All Sourced Scripts And Should Not Be Changed 
+    # In Any Of The Sourced Scripts
+    declare -A CONFIG_DEFAULTS_ENV
+    # Env Created By Merging The CONFIG_ADD_ENV & CONFIG_DEFAULTS_ENV
     declare -A CONFIG_ENV
-    # Env to track from where the value of a particular configration is being picked up
-    declare -A CONFIG_ENV_REVISION_HISTORY
-    # run env which are needed but are not supplied will be picked from CONFIG_ENV_DEFAULTS_READ_ONLY.
-    # All values present in CONFIG_ENV_DEFAULTS_READ_ONLY will be looked up in CONFIG_ENV
-    # if the value is not found in CONFIG_ENV then it will be picked from CONFIG_ENV_DEFAULTS_READ_ONLY.
-    # this will be available for READ ONLY usage in all sourced scripts and should not be changed 
-    # in any of the sourced scripts
-    declare -A CONFIG_ENV_DEFAULTS_READ_ONLY
-    # Env created by merging the CONFIG_ENV & CONFIG_ENV_DEFAULTS_READ_ONLY
-    declare -A CONFIG_ENV_FINAL_READ_ONLY
-    # parameters passed to the script form the PARAM_ENV
+    # Env Containing Lineage Of Evalautions On A Keys
+    declare -A CONFIG_EVAL_LINEAGE
+    # Env Containing Evalauted Config Values
+    declare -A CONFIG_EVAL_ENV
+    # Env Created For Variables Used Within The Script
     declare -A VAR_ENV
-    # variables which remain constant during runtime form VAL_ENV
-    declare -A VAL_ENV
-# <<< Define container dictionaries for all variables used by the main script. <<<
+# <<< Define Container Dictionaries For All Variables Used By The Main Script. <<<
 
 
-# >>> Set magic variables for current file, directory, os etc >>>
+# >>> Set Magic Variables For Current File, Directory, OS etc >>>
 ##############################################################################
-    RUN_ENV_READ_ONLY["script.dir.path"]="$(cd "$(dirname "${BASH_SOURCE[${__tmp_source_idx:-0}]}")" && pwd)"
-    RUN_ENV_READ_ONLY["script.file.path"]="${RUN_ENV_READ_ONLY["script.dir.path"]}/$(basename "${BASH_SOURCE[${__tmp_source_idx:-0}]}")"
-    RUN_ENV_READ_ONLY["script.file.name"]="$(basename "${RUN_ENV_READ_ONLY["script.file.path"]}")"
-    RUN_ENV_READ_ONLY["script.file.ext"]="${RUN_ENV_READ_ONLY["script.file.name"]##*.}"
-    RUN_ENV_READ_ONLY["script.file.base"]="$(basename "${RUN_ENV_READ_ONLY["script.file.name"]}" .${RUN_ENV_READ_ONLY["script.file.ext"]})"
+    RUN_ENV["script.dir.path"]="$(cd "$(dirname "${BASH_SOURCE[${__tmp_source_idx:-0}]}")" && pwd)"
+    RUN_ENV["script.file.path"]="${RUN_ENV["script.dir.path"]}/$(basename "${BASH_SOURCE[${__tmp_source_idx:-0}]}")"
+    RUN_ENV["script.file.name"]="$(basename "${RUN_ENV["script.file.path"]}")"
+    RUN_ENV["script.file.ext"]="${RUN_ENV["script.file.name"]##*.}"
+    RUN_ENV["script.file.base"]="$(basename "${RUN_ENV["script.file.name"]}" .${RUN_ENV["script.file.ext"]})"
 
-    RUN_ENV_READ_ONLY["script.run.invocation"]="$(printf %q "${RUN_ENV_READ_ONLY["script.file.path"]}")$( (($#)) && printf ' %q' "$@" || true)"
-    RUN_ENV_READ_ONLY["script.run.procid"]="$$"
-    RUN_ENV_READ_ONLY["script.run.date"]="$(date)"
-    RUN_ENV_READ_ONLY["script.run.whoami"]="$(whoami)"
-    RUN_ENV_READ_ONLY["script.run.hostname"]="$(hostname)"
-    RUN_ENV_READ_ONLY["script.run.dateid"]="$(date "+%Y_%m_%d-%H_%M_%S_%N")"
-    RUN_ENV_READ_ONLY["script.run.date.yyyymm"]="$(date "+%Y%m")"
-    RUN_ENV_READ_ONLY["script.run.date.yyyymmdd"]="$(date "+%Y%m%d")"
-    RUN_ENV_READ_ONLY["script.run.unique.runid"]="${RUN_ENV_READ_ONLY["script.file.name"]}.${RUN_ENV_READ_ONLY["script.run.procid"]}.${RUN_ENV_READ_ONLY["script.run.dateid"]}"
-# <<< Set magic variables for current file, directory, os etc. <<<
+    RUN_ENV["script.run.invocation"]="$(printf %q "${RUN_ENV["script.file.path"]}")$( (($#)) && printf ' %q' "$@" || true)"
+    RUN_ENV["script.run.procid"]="$$"
+    RUN_ENV["script.run.date"]="$(date)"
+    RUN_ENV["script.run.whoami"]="$(whoami)"
+    RUN_ENV["script.run.hostname"]="$(hostname)"
+    RUN_ENV["script.run.dateid"]="$(date "+%Y_%m_%d-%H_%M_%S_%N")"
+    RUN_ENV["script.run.date.yyyymm"]="$(date "+%Y%m")"
+    RUN_ENV["script.run.date.yyyymmdd"]="$(date "+%Y%m%d")"
+    RUN_ENV["script.run.unique.runid"]="${RUN_ENV["script.file.name"]}.${RUN_ENV["script.run.procid"]}.${RUN_ENV["script.run.dateid"]}"
+# <<< Set Magic Variables For Current File, Directory, OS etc. <<<
 
 
-# >>> Define usage and helptext >>>
+# >>> Define Usage And Helptext >>>
 ##############################################################################
 __sample_usage="SAMPLE USAGE: ${0} [ -p PROCESS_NAME ] [ -a app_name ] [ -e current_run_env ] [ -c config_file_name ] [ -d ] [ -v ] [ -h ] ..."
 
 [[ "${__usage+_}" ]] || read -r -d '' __usage <<-'EOF'|| true # exits non-zero when EOF encountered
--p    PARAM_ENV_READ_ONLY["script.process.name"]       <<Mandatory parameter>>: Main process name. All process dir 
-                                                         will be created under process_name dir & process_name dir 
-                                                         will be created under script.read.rootdir && script.write.rootdir
-                                                         defined in CONFIG_ENV.
+-p    PARAM_ENV["script.process.name"]       <<Mandatory Parameter>>: Main Process Name. All Process Dir 
+                                             Will Be Created Under process_name dir & process_name Dir 
+                                             Will Be Created Under script.read.rootdir & script.write.rootdir
+                                             Defined In CONFIG_ADD_ENV.
 
-  -a    PARAM_ENV_READ_ONLY["script.process.appname"]    <<Mandatory parameter>>: application name. Must be in lower case. 
+  -a    PARAM_ENV["script.process.appname"]    <<Mandatory Parameter>>: Application Name. Must Be In Lower Case. 
 
-  -e    PARAM_ENV_READ_ONLY["script.runtime.envname"]    <<Mandatory parameter>>: current run env name e.g dev/uat/prod. 
-                                                         Must be in lower case.
+  -e    PARAM_ENV["script.runtime.envname"]    <<Mandatory Parameter>>: Current Run Env Name e.g. dev/uat/prod. 
+                                               Must Be In Lower Case.
 
-  -c    PARAM_ENV_READ_ONLY["script.config.rootfile"]    <<Optional parameter>>: root config file name which will be used to
-                                                         pass root configrations for the script run. NOT RECOMMEDED FOR PROD RUNS.
+  -c    PARAM_ENV["script.config.rootfile"]    <<Optional Parameter>>: Root Config File Name Which Will Be Used To
+                                               Pass Root Configrations For The Script Run. NOT RECOMMEDED FOR PROD RUNS.
 
-  -v    PARAM_ENV_READ_ONLY["script.verbose.mode"]       <<Optional parameter>>: Enable verbose mode, any standard error will be 
-                                                         directed to screen instead of log file.
-                                                         NOT RECOMMEDED FOR PROD RUNS. 
+  -v    PARAM_ENV["script.verbose.mode"]       <<Optional Parameter>>: Enable Verbose Mode, Any Standard Error Will Be 
+                                               Directed To Screen Instead Of Log File. NOT RECOMMEDED FOR PROD RUNS. 
 
-  -d    PARAM_ENV_READ_ONLY["script.debug.mode"]         <<Optional parameter>>: Enable debug mode, to be used only for dubugging. 
-                                                         NOT RECOMMEDED FOR PROD RUNS.
+  -d    PARAM_ENV["script.debug.mode"]         <<Optional Parameter>>: Enable Debug Mode, To Be Used Only For Dubugging. 
+                                               NOT RECOMMEDED FOR PROD RUNS.
 
-  -h    --help                                           This page
+  -h    --help                                 This Page
 EOF
 
     # shellcheck disable=SC2015
     [[ "${__helptext+_}" ]] || read -r -d '' __helptext <<-'EOF' || true # exits non-zero when EOF encountered
-    Generic script for triggering main jobs.
+    Generic Script For Triggering Main Jobs.
 EOF
 
 
@@ -133,147 +134,190 @@ EOF
 
         exit 1
     }
-# <<< Define usage and helptext. <<<
+# <<< Define Usage And Helptext. <<<
 
 
-# >>> Parse parameters >>>
+# >>> Parse Parameters >>>
 ##############################################################################
-    PARAM_ENV_READ_ONLY["script.debug.mode"]="OFF"
-    PARAM_ENV_READ_ONLY["script.verbose.mode"]="OFF"
+    PARAM_ENV["script.debug.mode"]="OFF"
+    PARAM_ENV["script.verbose.mode"]="OFF"
     
 
     while getopts ":p:a:e:c:dvh" o; do
         case "${o}" in
             p)
-                PARAM_ENV_READ_ONLY["script.process.name"]="${OPTARG}"
+                PARAM_ENV["script.process.name"]="${OPTARG}"
 
-                echo "INFO: PARAM_ENV_READ_ONLY[script.process.name] IS SET TO: '${PARAM_ENV_READ_ONLY["script.process.name"]}'"
+                echo "INFO: PARAM_ENV[script.process.name] Is Set To: '${PARAM_ENV["script.process.name"]}'"
                 ;;
             a)
-                PARAM_ENV_READ_ONLY["script.process.appname"]="${OPTARG}"
+                PARAM_ENV["script.process.appname"]="${OPTARG}"
 
-                [[ "${PARAM_ENV_READ_ONLY["script.process.appname"]}" != "${PARAM_ENV_READ_ONLY["script.process.appname"],,}" ]] && { help "ERROR: PARAM_ENV_READ_ONLY[script.process.appname] value must be in lower case"; }
+                [[ "${PARAM_ENV["script.process.appname"]}" != "${PARAM_ENV["script.process.appname"],,}" ]] && { help "ERROR: PARAM_ENV[script.process.appname] Value Must Be In Lower Case"; }
                 
-                echo "INFO: PARAM_ENV_READ_ONLY[script.process.appname] IS SET TO: '${PARAM_ENV_READ_ONLY["script.process.appname"]}'"
+                echo "INFO: PARAM_ENV[script.process.appname] Is Set To: '${PARAM_ENV["script.process.appname"]}'"
                 ;;
             e)
-                PARAM_ENV_READ_ONLY["script.runtime.envname"]="${OPTARG}"
+                PARAM_ENV["script.runtime.envname"]="${OPTARG}"
 
-                [[ "${PARAM_ENV_READ_ONLY["script.runtime.envname"]}" != "${PARAM_ENV_READ_ONLY["script.runtime.envname"],,}" ]] && { help "ERROR: PARAM_ENV_READ_ONLY[script.runtime.envname] value must be in lower case"; }
+                [[ "${PARAM_ENV["script.runtime.envname"]}" != "${PARAM_ENV["script.runtime.envname"],,}" ]] && { help "ERROR: PARAM_ENV[script.runtime.envname] Value Must Be In Lower Case"; }
 
-                echo "INFO: PARAM_ENV_READ_ONLY[script.runtime.envname] IS SET TO: '${PARAM_ENV_READ_ONLY["script.runtime.envname"]}'"
+                echo "INFO: PARAM_ENV[script.runtime.envname] Is Set To: '${PARAM_ENV["script.runtime.envname"]}'"
                 ;;
             c)  
-                PARAM_ENV_READ_ONLY["script.config.rootfile"]="${OPTARG}"
+                PARAM_ENV["script.config.rootfile"]="${OPTARG}"
 
-                [[ "$(dirname ${PARAM_ENV_READ_ONLY["script.config.rootfile"]})" == "." ]] && PARAM_ENV_READ_ONLY["script.config.rootfile"]="${RUN_ENV_READ_ONLY["script.dir.path"]%%/}/${PARAM_ENV_READ_ONLY["script.config.rootfile"]}"
+                [[ "$(dirname ${PARAM_ENV["script.config.rootfile"]})" == "." ]] && PARAM_ENV["script.config.rootfile"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.config.rootfile"]}"
 
-                [[ -f "${PARAM_ENV_READ_ONLY["script.config.rootfile"]}" ]] || { help "ERROR: PARAM_ENV_READ_ONLY[script.config.rootfile]:'${PARAM_ENV_READ_ONLY["script.config.rootfile"]}' not found"; }
+                [[ -f "${PARAM_ENV["script.config.rootfile"]}" ]] || { help "ERROR: PARAM_ENV[script.config.rootfile]:'${PARAM_ENV["script.config.rootfile"]}' Not Found"; }
                 
-                echo "INFO: PARAM_ENV_READ_ONLY[script.config.rootfile] IS SET TO: '${PARAM_ENV_READ_ONLY["script.config.rootfile"]}'"
+                echo "INFO: PARAM_ENV[script.config.rootfile] Is Set To: '${PARAM_ENV["script.config.rootfile"]}'"
                 ;;
             d)
-                PARAM_ENV_READ_ONLY["script.debug.mode"]="ON"
-                echo "INFO: PARAM_ENV_READ_ONLY[script.debug.mode] IS SET TO: '${PARAM_ENV_READ_ONLY["script.debug.mode"]}'"
+                PARAM_ENV["script.debug.mode"]="ON"
+                echo "INFO: PARAM_ENV[script.debug.mode] Is Set To: '${PARAM_ENV["script.debug.mode"]}'"
                 ;;
             v)  
-                PARAM_ENV_READ_ONLY["script.verbose.mode"]="ON"
+                PARAM_ENV["script.verbose.mode"]="ON"
                 
-                echo "INFO: PARAM_ENV_READ_ONLY[script.verbose.mode] IS SET TO: '${PARAM_ENV_READ_ONLY["script.verbose.mode"]}'"
+                echo "INFO: PARAM_ENV[script.verbose.mode] Is Set To: '${PARAM_ENV["script.verbose.mode"]}'"
                 
-                echo "WARNING: SETTING PARAM_ENV_READ_ONLY[script.verbose.mode] TO: '${PARAM_ENV_READ_ONLY["script.verbose.mode"]}' IS NOT RECOMMENDED FOR PRODUCTION RUNS. TURN VERBOSE MODE TO OFF IF NOT DOING TEST RUNS"
+                echo "WARNING: SETTING PARAM_ENV[script.verbose.mode] TO: '${PARAM_ENV["script.verbose.mode"]}' IS NOT RECOMMENDED FOR PRODUCTION RUNS. TURN VERBOSE MODE TO OFF IF NOT DOING TEST RUNS"
 
                 echo "WARNING: PROCESS WILL HALT FOR 15 SECONDS BEFORE EXECUTION IN VERBOSE MODE RUNS"
                 sleep 15
                 ;;
             h)  
-                help "Help using ${0}"
+                help "Help Using ${0}"
                 ;;
             :)  
-                help "ERROR: Option -$OPTARG requires an argument"
+                help "ERROR: Option -$OPTARG Requires An Argument"
                 ;;
             \?)
-                help "ERROR: Invalid option -$OPTARG"
+                help "ERROR: Invalid Option -$OPTARG"
                 ;;
         esac
     done
 
     shift $((OPTIND-1))
 
-    [[ ${PARAM_ENV_READ_ONLY["script.process.name"]+_} ]] || { help "ERROR: PARAM_ENV_READ_ONLY["script.process.name"] is mandatory parameter"; }
+    [[ ${PARAM_ENV["script.process.name"]+_} ]] || { help "ERROR: PARAM_ENV["script.process.name"] Is Mandatory Parameter"; }
 
-    [[ ${PARAM_ENV_READ_ONLY["script.process.appname"]+_} ]] || { help "ERROR: PARAM_ENV_READ_ONLY["script.process.appname"] is mandatory parameter"; }
+    [[ ${PARAM_ENV["script.process.appname"]+_} ]] || { help "ERROR: PARAM_ENV["script.process.appname"] Is Mandatory Parameter"; }
 
-    [[ ${PARAM_ENV_READ_ONLY["script.runtime.envname"]+_} ]] || { help "ERROR: PARAM_ENV_READ_ONLY["script.runtime.envname"] is mandatory parameter"; }
+    [[ ${PARAM_ENV["script.runtime.envname"]+_} ]] || { help "ERROR: PARAM_ENV["script.runtime.envname"] Is Mandatory Parameter"; }
 
-    PARAM_ENV_READ_ONLY["script.nonargs.paramlist"]="${@}"
-    echo "INFO: ALL REMAINING PARAMS ARE LOADED TO PARAM_ENV_READ_ONLY[script.nonargs.paramlist] ARE: '${PARAM_ENV_READ_ONLY["script.nonargs.paramlist"]}'"
-# <<< Parse parameters. <<<
+    PARAM_ENV["script.nonargs.paramlist"]="${@}"
+    echo "INFO: All Remaining Params Are Loaded To PARAM_ENV[script.nonargs.paramlist]: '${PARAM_ENV["script.nonargs.paramlist"]}'"
+# <<< Parse Parameters. <<<
 
 
-# >>> Setup default config env for the process >>>
+# >>> Setup Default Config Env For The Process >>>
+# Only These Config Overrides Will Get Picked From The Env
+# So If Default Is Not Available But We Still Want To Pick 
+# From Env Then A Null Must Be Specified e.g. CONFIG_DEFAULTS_ENV["script.conf.unknown"]="NULL"
 ##############################################################################
-    CONFIG_ENV_DEFAULTS_READ_ONLY["script.read.rootdir"]="${RUN_ENV_READ_ONLY["script.dir.path"]%%/}/${PARAM_ENV_READ_ONLY["script.process.name"]}"
-    CONFIG_ENV_DEFAULTS_READ_ONLY["script.write.rootdir"]="${RUN_ENV_READ_ONLY["script.dir.path"]%%/}/${PARAM_ENV_READ_ONLY["script.process.name"]}"
-# <<< Setup default config env for the process. <<<
+    CONFIG_DEFAULTS_ENV["script.read.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
+    
+    CONFIG_DEFAULTS_ENV["script.write.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
+# <<< Setup Default Config Env For The Process. <<<
 
-# >>> Functions for setting and merging configs >>>
+
+# >>> Functions For Setting, Merging & Resolving Configs & Dynamic Templates >>>
 ##############################################################################
-        add2ConfigEnv() {
+    add2ConfigEnv() {
         local keyname="${1}"
         local value="${2}"
         local caller_script="$(caller | cut -d' ' -f2-)"
 
-        if [[ ${CONFIG_ENV_DEFAULTS_READ_ONLY[${keyname}]+_} ]]
+        if [[ ${CONFIG_DEFAULTS_ENV[${keyname}]+_} ]]
         then
-            if [[ ${CONFIG_ENV[${keyname}]+_} ]]
+            if [[ ${CONFIG_ADD_ENV[${keyname}]+_} ]]
             then
-                CONFIG_ENV_REVISION_HISTORY[${keyname}]="${CONFIG_ENV_REVISION_HISTORY[${keyname}]} => ${caller_script}@add2ConfigEnv '${keyname}' '${value}'"
+                CONFIG_ENV_LINEAGE[${keyname}]="${CONFIG_ENV_LINEAGE[${keyname}]} => '${caller_script}'@add2ConfigEnv '${keyname}' '${value}'"
             else
-                CONFIG_ENV_REVISION_HISTORY[${keyname}]="CONFIG_ENV_DEFAULTS_READ_ONLY[${keyname}] => ${caller_script}@add2ConfigEnv '${keyname}' '${value}'"
+                CONFIG_ENV_LINEAGE[${keyname}]="'CONFIG_DEFAULTS_ENV[${keyname}]':'${CONFIG_DEFAULTS_ENV[${keyname}]}' => '${caller_script}'@add2ConfigEnv '${keyname}' '${value}'"
             fi
 
-            CONFIG_ENV[${keyname}]="${value}"
+            CONFIG_ADD_ENV[${keyname}]="${value}"
         else
-            echo "WARNING: SKIPPING config addition to env for config: '${keyname}' as only configs for which defaults are set can be used within the process"
+            echo "WARNING: SKIPPING CONFIG ADDITION TO ENV FOR CONFIG: '${keyname}' AS ONLY CONFIGS FOR WHICH DEFAULTS ARE SET CAN BE USED WITHIN THE PROCESS" 1>&2
         fi
     }
 
-    refreshFinalConfigEnv() {
-        for k in "${!CONFIG_ENV_DEFAULTS_READ_ONLY[@]}"
+    refreshConfigEnv() {
+        local caller_script="$(caller | cut -d' ' -f2-)"
+        echo "INFO: Config Refresh Initiated From: '${caller_script}'" 1>&2
+        for k in "${!CONFIG_DEFAULTS_ENV[@]}"
         do
-            if [[ ${CONFIG_ENV[${k}]+_} ]]
+            if [[ ${CONFIG_ADD_ENV[${k}]+_} ]]
             then
-                CONFIG_ENV_FINAL_READ_ONLY[${k}]="${CONFIG_ENV[${k}]}"
+                CONFIG_ENV[${k}]="${CONFIG_ADD_ENV[${k}]}"
             else
-                CONFIG_ENV_FINAL_READ_ONLY[${k}]="${CONFIG_ENV_DEFAULTS_READ_ONLY[${k}]}"
+                CONFIG_ENV[${k}]="${CONFIG_DEFAULTS_ENV[${k}]}"
             fi
         done
     }
 
-    # TO BE DEFINED AFTER LOG FILE DEFINITION
-    showConfigs() {
-        local container_name="${1}"
-        echo -e "\n# Begin show configs: ${container_name} >>>"
-        for k in $(eval echo "\${!${container_name}[@]}")
-        do
-            echo -e "\t INFO: ${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
-        done
-        echo -e "# End show configs: ${container_name} <<<\n"
+   evalConfig() {
+        refreshConfigEnv
+        local keyname="${1}"
+        local caller_script="$(caller | cut -d' ' -f2-)"
+
+        if [[ ${CONFIG_ENV[${keyname}]+_} ]]
+        then
+            if [[ ${CONFIG_EVAL_LINEAGE[${keyname}]+_} ]]
+            then
+                CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #Begin Eval >>> 'CONFIG_ENV[${keyname}]':'${CONFIG_ENV[${keyname}]}' => '${caller_script}'@evalConfig '${keyname}'"
+            else
+                CONFIG_EVAL_LINEAGE[${keyname}]="#Begin Eval >>> 'CONFIG_ENV[${keyname}]':'${CONFIG_ENV[${keyname}]}' => '${caller_script}'@evalConfig '${keyname}'"
+            fi
+
+            local curr_value="${CONFIG_ENV[${keyname}]}"
+            local next_value=""
+
+            while [[ "${curr_value}" =~ .*\$\{[^{\}]*}.* ]]
+            do
+                next_value="$(eval echo "${curr_value}")"
+                CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} -> ${next_value}"
+                if [[ "${next_value}" == "${curr_value}" ]]
+                then
+                    break
+                else
+                    curr_value="${next_value}"
+                fi
+            done
+
+            CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #End Eval <<<"
+            CONFIG_EVAL_ENV[${keyname}]="${curr_value}"
+        else
+            help "ERROR: Invalid Config Reference: CONFIG_ENV[${keyname}]"
+        fi
     }
-# <<< Functions for setting and merging configs. <<<
 
-add2ConfigEnv 'script.read.rootdir2' 'check'
-add2ConfigEnv 'script.read.rootdir4' 'check2'
+    # To Be Defined After Log File Definition
+    showConfigs() {
+        for arg in "$@"
+        do
+            local container_name="${arg}"
+            echo -e "\n# Begin Show Configs: ${container_name} >>>"
+            for k in $(eval echo "\${!${container_name}[@]}")
+            do
+                echo -e "\t INFO: ${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
+            done
+            echo -e "# End Show Configs: ${container_name} <<<\n"
+        done
+    }
+    # showConfigs PARAM_ENV RUN_ENV VAR_ENV CONFIG_ENV CONFIG_EVAL_ENV CONFIG_ENV_LINEAGE CONFIG_EVAL_LINEAGE
+# <<< Functions For Setting, Merging & Resolving Configs & Dynamic Templates. <<<
 
-source test2.sh
 
-refreshFinalConfigEnv
-showConfigs PARAM_ENV_READ_ONLY
-showConfigs RUN_ENV_READ_ONLY
-showConfigs CONFIG_ENV_FINAL_READ_ONLY
-showConfigs CONFIG_ENV_REVISION_HISTORY
-showConfigs CONFIG_ENV_DEFAULTS_READ_ONLY
+x=10
+add2ConfigEnv "script.write.rootdir" '"${x}"'
+evalConfig "script.write.rootdir"
+evalConfig "script.write.rootdir"
+echo ${CONFIG_EVAL_ENV["script.write.rootdir"]}
 
-# unset PARAM_ENV_READ_ONLY RUN_ENV_READ_ONLY CONFIG_ENV CONFIG_ENV_REVISION_HISTORY
-# unset CONFIG_ENV_DEFAULTS_READ_ONLY VAR_ENV VAL_ENV
+#echo ${RUN_ENV[script.run2.hostname]}
+
+showConfigs PARAM_ENV RUN_ENV VAR_ENV CONFIG_ENV CONFIG_EVAL_ENV CONFIG_ENV_LINEAGE CONFIG_EVAL_LINEAGE

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-# Reference & lot of the functionality is taken from: https://bash3boilerplate.sh/ && multiple online resources. 
-# Thanks to the community!!
+# Reference & Lot Of The Functionality Is Taken From: https://bash3boilerplate.sh/ && Multiple Online Resources. 
+# Thanks To The Community!!
 
 # Exit on error. Append "|| true" if you expect an error.
 set -o errexit
-# Exit on error inside any functions or subshells.
+# Exit On Error Inside Any Functions Or Subshells.
 set -o errtrace
-# Do not allow use of undefined vars. Use ${VAR:-} to use an undefined VAR
+# Do Not Allow Use Of Undefined Vars. Use ${VAR:-} To Use An Undefined VAR
 set -o nounset
-# Catch the error in case mysqldump fails (but gzip succeeds) in `mysqldump |gzip`
+# Catch The Error In Case Mysqldump Fails (But Gzip Succeeds) In `mysqldump |gzip`
 set -o pipefail
-# Turn on traces, useful while debugging but commented out by default
+# Turn On Traces, Useful While Debugging But Commented Out By Default
 # set -o xtrace
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
@@ -32,42 +32,40 @@ else
 fi
 
 
-# >>> Define container dictionaries for all variables used by the main script >>>
+# >>> Define Container Dictionaries For All Variables Used By The Main Script >>>
 ##############################################################################
-    unset PARAM_ENV RUN_ENV CONFIG_ADD_ENV CONFIG_ENV_REVISION_HISTORY
-    unset CONFIG_DEFAULTS_ENV VAR_ENV VAL_ENV
+    unset PARAM_ENV RUN_ENV CONFIG_ADD_ENV CONFIG_ENV_LINEAGE
+    unset CONFIG_DEFAULTS_ENV CONFIG_EVAL_LINEAGE VAR_ENV
     
-    # parameters passed to the script form the PARAM_ENV, this will be available for READ ONLY usage 
-    # in all sourced scripts and should not be changed in any of the sourced scripts
+    # Parameters Passed To The Script Form The PARAM_ENV, This Will Be Available For Read Only Usage 
+    # In All Sourced Scripts And Should Not Be Changed In Any Of The Sourced Scripts
     declare -A PARAM_ENV
-    # config values once set in RUN_ENV will not change till end, this will be available for READ ONLY usage
-    # in all sourced scripts and should not be changed in any of the sourced scripts
+    # Config Values Once Set In RUN_ENV Will Not Change Till End, This Will Be Available For READ ONLY Usage
+    # In All Sourced Scripts And Should Not Be Changed In Any Of The Sourced Scripts
     declare -A RUN_ENV
-    # Container for all configrations which can be set by the sourced config files. 
-    # Any configration that is set by the sourced files must be set using function: add2ConfigEnv "key.name" "value"
+    # Container For All Configrations Which Can Be Set By The Sourced Config Files. 
+    # Any Configration That Is Set By The Sourced Files Must Be Set Using Function: add2ConfigEnv "key.name" "value"
     declare -A CONFIG_ADD_ENV
-    # Env to track from where the value of a particular configration is being picked up
-    declare -A CONFIG_ENV_REVISION_HISTORY
-    # run env which are needed but are not supplied will be picked from CONFIG_DEFAULTS_ENV.
-    # All values present in CONFIG_DEFAULTS_ENV will be looked up in CONFIG_ADD_ENV
-    # if the value is not found in CONFIG_ADD_ENV then it will be picked from CONFIG_DEFAULTS_ENV.
-    # this will be available for READ ONLY usage in all sourced scripts and should not be changed 
-    # in any of the sourced scripts
+    # Env To Track From Where The Value Of A Particular Configration Is Being Picked Up
+    declare -A CONFIG_ENV_LINEAGE
+    # Run Env Which Are Needed But Are Not Supplied Will Be Picked From CONFIG_DEFAULTS_ENV.
+    # All Values Present In CONFIG_DEFAULTS_ENV Will Be Looked Up In CONFIG_ADD_ENV
+    # If The Value Is Not Found In CONFIG_ADD_ENV Then It Will Be Picked From CONFIG_DEFAULTS_ENV.
+    # This Will Be Available For Read Only Usage In All Sourced Scripts And Should Not Be Changed 
+    # In Any Of The Sourced Scripts
     declare -A CONFIG_DEFAULTS_ENV
-    # Env created by merging the CONFIG_ADD_ENV & CONFIG_DEFAULTS_ENV
+    # Env Created By Merging The CONFIG_ADD_ENV & CONFIG_DEFAULTS_ENV
     declare -A CONFIG_ENV
-    # parameters passed to the script form the PARAM_ENV
+    # Env Containing Lineage Of Evalautions On A Keys
+    declare -A CONFIG_EVAL_LINEAGE
+    # Env Containing Evalauted Config Values
+    declare -A CONFIG_EVAL_ENV
+    # Env Created For Variables Used Within The Script
     declare -A VAR_ENV
-
-    # below dictionaries will be used to define dynamic templates
-    # these templates can use variables from RUN_ENV, PARAM_ENV, CONFIG_ENV & VAR_ENV
-    declare -A DYNAMIC_TEMPLATE_DEFAULT_ENV
-    declare -A DYNAMIC_TEMPLATE_ENV
-    declare -A DYNAMIC_TEMPLATE_ENV_REVISION_HISTORY
-# <<< Define container dictionaries for all variables used by the main script. <<<
+# <<< Define Container Dictionaries For All Variables Used By The Main Script. <<<
 
 
-# >>> Set magic variables for current file, directory, os etc >>>
+# >>> Set Magic Variables For Current File, Directory, OS etc >>>
 ##############################################################################
     RUN_ENV["script.dir.path"]="$(cd "$(dirname "${BASH_SOURCE[${__tmp_source_idx:-0}]}")" && pwd)"
     RUN_ENV["script.file.path"]="${RUN_ENV["script.dir.path"]}/$(basename "${BASH_SOURCE[${__tmp_source_idx:-0}]}")"
@@ -84,40 +82,39 @@ fi
     RUN_ENV["script.run.date.yyyymm"]="$(date "+%Y%m")"
     RUN_ENV["script.run.date.yyyymmdd"]="$(date "+%Y%m%d")"
     RUN_ENV["script.run.unique.runid"]="${RUN_ENV["script.file.name"]}.${RUN_ENV["script.run.procid"]}.${RUN_ENV["script.run.dateid"]}"
-# <<< Set magic variables for current file, directory, os etc. <<<
+# <<< Set Magic Variables For Current File, Directory, OS etc. <<<
 
 
-# >>> Define usage and helptext >>>
+# >>> Define Usage And Helptext >>>
 ##############################################################################
 __sample_usage="SAMPLE USAGE: ${0} [ -p PROCESS_NAME ] [ -a app_name ] [ -e current_run_env ] [ -c config_file_name ] [ -d ] [ -v ] [ -h ] ..."
 
 [[ "${__usage+_}" ]] || read -r -d '' __usage <<-'EOF'|| true # exits non-zero when EOF encountered
--p    PARAM_ENV["script.process.name"]       <<Mandatory parameter>>: Main process name. All process dir 
-                                                         will be created under process_name dir & process_name dir 
-                                                         will be created under script.read.rootdir && script.write.rootdir
-                                                         defined in CONFIG_ADD_ENV.
+-p    PARAM_ENV["script.process.name"]       <<Mandatory Parameter>>: Main Process Name. All Process Dir 
+                                             Will Be Created Under process_name dir & process_name Dir 
+                                             Will Be Created Under script.read.rootdir & script.write.rootdir
+                                             Defined In CONFIG_ADD_ENV.
 
-  -a    PARAM_ENV["script.process.appname"]    <<Mandatory parameter>>: application name. Must be in lower case. 
+  -a    PARAM_ENV["script.process.appname"]    <<Mandatory Parameter>>: Application Name. Must Be In Lower Case. 
 
-  -e    PARAM_ENV["script.runtime.envname"]    <<Mandatory parameter>>: current run env name e.g dev/uat/prod. 
-                                                         Must be in lower case.
+  -e    PARAM_ENV["script.runtime.envname"]    <<Mandatory Parameter>>: Current Run Env Name e.g. dev/uat/prod. 
+                                               Must Be In Lower Case.
 
-  -c    PARAM_ENV["script.config.rootfile"]    <<Optional parameter>>: root config file name which will be used to
-                                                         pass root configrations for the script run. NOT RECOMMEDED FOR PROD RUNS.
+  -c    PARAM_ENV["script.config.rootfile"]    <<Optional Parameter>>: Root Config File Name Which Will Be Used To
+                                               Pass Root Configrations For The Script Run. NOT RECOMMEDED FOR PROD RUNS.
 
-  -v    PARAM_ENV["script.verbose.mode"]       <<Optional parameter>>: Enable verbose mode, any standard error will be 
-                                                         directed to screen instead of log file.
-                                                         NOT RECOMMEDED FOR PROD RUNS. 
+  -v    PARAM_ENV["script.verbose.mode"]       <<Optional Parameter>>: Enable Verbose Mode, Any Standard Error Will Be 
+                                               Directed To Screen Instead Of Log File. NOT RECOMMEDED FOR PROD RUNS. 
 
-  -d    PARAM_ENV["script.debug.mode"]         <<Optional parameter>>: Enable debug mode, to be used only for dubugging. 
-                                                         NOT RECOMMEDED FOR PROD RUNS.
+  -d    PARAM_ENV["script.debug.mode"]         <<Optional Parameter>>: Enable Debug Mode, To Be Used Only For Dubugging. 
+                                               NOT RECOMMEDED FOR PROD RUNS.
 
-  -h    --help                                           This page
+  -h    --help                                 This Page
 EOF
 
     # shellcheck disable=SC2015
     [[ "${__helptext+_}" ]] || read -r -d '' __helptext <<-'EOF' || true # exits non-zero when EOF encountered
-    Generic script for triggering main jobs.
+    Generic Script For Triggering Main Jobs.
 EOF
 
 
@@ -137,10 +134,10 @@ EOF
 
         exit 1
     }
-# <<< Define usage and helptext. <<<
+# <<< Define Usage And Helptext. <<<
 
 
-# >>> Parse parameters >>>
+# >>> Parse Parameters >>>
 ##############################################################################
     PARAM_ENV["script.debug.mode"]="OFF"
     PARAM_ENV["script.verbose.mode"]="OFF"
@@ -151,39 +148,39 @@ EOF
             p)
                 PARAM_ENV["script.process.name"]="${OPTARG}"
 
-                echo "INFO: PARAM_ENV[script.process.name] IS SET TO: '${PARAM_ENV["script.process.name"]}'"
+                echo "INFO: PARAM_ENV[script.process.name] Is Set To: '${PARAM_ENV["script.process.name"]}'"
                 ;;
             a)
                 PARAM_ENV["script.process.appname"]="${OPTARG}"
 
-                [[ "${PARAM_ENV["script.process.appname"]}" != "${PARAM_ENV["script.process.appname"],,}" ]] && { help "ERROR: PARAM_ENV[script.process.appname] value must be in lower case"; }
+                [[ "${PARAM_ENV["script.process.appname"]}" != "${PARAM_ENV["script.process.appname"],,}" ]] && { help "ERROR: PARAM_ENV[script.process.appname] Value Must Be In Lower Case"; }
                 
-                echo "INFO: PARAM_ENV[script.process.appname] IS SET TO: '${PARAM_ENV["script.process.appname"]}'"
+                echo "INFO: PARAM_ENV[script.process.appname] Is Set To: '${PARAM_ENV["script.process.appname"]}'"
                 ;;
             e)
                 PARAM_ENV["script.runtime.envname"]="${OPTARG}"
 
-                [[ "${PARAM_ENV["script.runtime.envname"]}" != "${PARAM_ENV["script.runtime.envname"],,}" ]] && { help "ERROR: PARAM_ENV[script.runtime.envname] value must be in lower case"; }
+                [[ "${PARAM_ENV["script.runtime.envname"]}" != "${PARAM_ENV["script.runtime.envname"],,}" ]] && { help "ERROR: PARAM_ENV[script.runtime.envname] Value Must Be In Lower Case"; }
 
-                echo "INFO: PARAM_ENV[script.runtime.envname] IS SET TO: '${PARAM_ENV["script.runtime.envname"]}'"
+                echo "INFO: PARAM_ENV[script.runtime.envname] Is Set To: '${PARAM_ENV["script.runtime.envname"]}'"
                 ;;
             c)  
                 PARAM_ENV["script.config.rootfile"]="${OPTARG}"
 
                 [[ "$(dirname ${PARAM_ENV["script.config.rootfile"]})" == "." ]] && PARAM_ENV["script.config.rootfile"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.config.rootfile"]}"
 
-                [[ -f "${PARAM_ENV["script.config.rootfile"]}" ]] || { help "ERROR: PARAM_ENV[script.config.rootfile]:'${PARAM_ENV["script.config.rootfile"]}' not found"; }
+                [[ -f "${PARAM_ENV["script.config.rootfile"]}" ]] || { help "ERROR: PARAM_ENV[script.config.rootfile]:'${PARAM_ENV["script.config.rootfile"]}' Not Found"; }
                 
-                echo "INFO: PARAM_ENV[script.config.rootfile] IS SET TO: '${PARAM_ENV["script.config.rootfile"]}'"
+                echo "INFO: PARAM_ENV[script.config.rootfile] Is Set To: '${PARAM_ENV["script.config.rootfile"]}'"
                 ;;
             d)
                 PARAM_ENV["script.debug.mode"]="ON"
-                echo "INFO: PARAM_ENV[script.debug.mode] IS SET TO: '${PARAM_ENV["script.debug.mode"]}'"
+                echo "INFO: PARAM_ENV[script.debug.mode] Is Set To: '${PARAM_ENV["script.debug.mode"]}'"
                 ;;
             v)  
                 PARAM_ENV["script.verbose.mode"]="ON"
                 
-                echo "INFO: PARAM_ENV[script.verbose.mode] IS SET TO: '${PARAM_ENV["script.verbose.mode"]}'"
+                echo "INFO: PARAM_ENV[script.verbose.mode] Is Set To: '${PARAM_ENV["script.verbose.mode"]}'"
                 
                 echo "WARNING: SETTING PARAM_ENV[script.verbose.mode] TO: '${PARAM_ENV["script.verbose.mode"]}' IS NOT RECOMMENDED FOR PRODUCTION RUNS. TURN VERBOSE MODE TO OFF IF NOT DOING TEST RUNS"
 
@@ -191,72 +188,32 @@ EOF
                 sleep 15
                 ;;
             h)  
-                help "Help using ${0}"
+                help "Help Using ${0}"
                 ;;
             :)  
-                help "ERROR: Option -$OPTARG requires an argument"
+                help "ERROR: Option -$OPTARG Requires An Argument"
                 ;;
             \?)
-                help "ERROR: Invalid option -$OPTARG"
+                help "ERROR: Invalid Option -$OPTARG"
                 ;;
         esac
     done
 
     shift $((OPTIND-1))
 
-    [[ ${PARAM_ENV["script.process.name"]+_} ]] || { help "ERROR: PARAM_ENV["script.process.name"] is mandatory parameter"; }
+    [[ ${PARAM_ENV["script.process.name"]+_} ]] || { help "ERROR: PARAM_ENV["script.process.name"] Is Mandatory Parameter"; }
 
-    [[ ${PARAM_ENV["script.process.appname"]+_} ]] || { help "ERROR: PARAM_ENV["script.process.appname"] is mandatory parameter"; }
+    [[ ${PARAM_ENV["script.process.appname"]+_} ]] || { help "ERROR: PARAM_ENV["script.process.appname"] Is Mandatory Parameter"; }
 
-    [[ ${PARAM_ENV["script.runtime.envname"]+_} ]] || { help "ERROR: PARAM_ENV["script.runtime.envname"] is mandatory parameter"; }
+    [[ ${PARAM_ENV["script.runtime.envname"]+_} ]] || { help "ERROR: PARAM_ENV["script.runtime.envname"] Is Mandatory Parameter"; }
 
     PARAM_ENV["script.nonargs.paramlist"]="${@}"
-    echo "INFO: ALL REMAINING PARAMS ARE LOADED TO PARAM_ENV[script.nonargs.paramlist] ARE: '${PARAM_ENV["script.nonargs.paramlist"]}'"
-# <<< Parse parameters. <<<
+    echo "INFO: All Remaining Params Are Loaded To PARAM_ENV[script.nonargs.paramlist]: '${PARAM_ENV["script.nonargs.paramlist"]}'"
+# <<< Parse Parameters. <<<
 
 
-# >>> Setup default config env for the process >>>
-# Only these config overrides will get picked from the env
-# So if default is not available but we still want to pick 
-# from env then a NULL must be specified e.g CONFIG_DEFAULTS_ENV["script.conf.unknown"]="NULL"
+# >>> Functions For Setting, Merging & Resolving Configs & Dynamic Templates >>>
 ##############################################################################
-    CONFIG_DEFAULTS_ENV["script.read.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
-    
-    CONFIG_DEFAULTS_ENV["script.write.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
-# <<< Setup default config env for the process. <<<
-
-
-# >>> Setup default for dynamic templates >>>
-# Only these dynamic template overrides will get picked from the env
-# So if default is not available but we still want to pick 
-# from env then a NULL must be specified e.g DYNAMIC_TEMPLATE_DEFAULT_ENV["script.template.unknown"]="NULL"
-##############################################################################
-    DYNAMIC_TEMPLATE_DEFAULT_ENV["script.template.unknown"]="NULL"
-# <<< Setup default for dynamic templates. <<<
-
-
-# >>> Functions for setting, merging & resolving configs & dynamic templates >>>
-##############################################################################
-    add2DynamicTemplateEnv() {
-        local keyname="${1}"
-        local value="${2}"
-        local caller_script="$(caller | cut -d' ' -f2-)"
-
-        if [[ ${DYNAMIC_TEMPLATE_DEFAULT_ENV[${keyname}]+_} ]]
-        then
-            if [[ ${DYNAMIC_TEMPLATE_ENV[${keyname}]+_} ]]
-            then
-                DYNAMIC_TEMPLATE_ENV_REVISION_HISTORY[${keyname}]="${DYNAMIC_TEMPLATE_ENV_REVISION_HISTORY[${keyname}]} => ${caller_script}@add2DynamicTemplateEnv '${keyname}' '${value}'"
-            else
-                DYNAMIC_TEMPLATE_ENV_REVISION_HISTORY[${keyname}]="DYNAMIC_TEMPLATE_DEFAULT_ENV[${keyname}] => ${caller_script}@add2DynamicTemplateEnv '${keyname}' '${value}'"
-            fi
-
-            DYNAMIC_TEMPLATE_ENV[${keyname}]="${value}"
-        else
-            echo "WARNING: SKIPPING dynamic template addition to env for template: '${keyname}' as only templates for which defaults are set can be used within the process"
-        fi
-    }
-
     add2ConfigEnv() {
         local keyname="${1}"
         local value="${2}"
@@ -266,18 +223,20 @@ EOF
         then
             if [[ ${CONFIG_ADD_ENV[${keyname}]+_} ]]
             then
-                CONFIG_ENV_REVISION_HISTORY[${keyname}]="${CONFIG_ENV_REVISION_HISTORY[${keyname}]} => ${caller_script}@add2ConfigEnv '${keyname}' '${value}'"
+                CONFIG_ENV_LINEAGE[${keyname}]="${CONFIG_ENV_LINEAGE[${keyname}]} => '${caller_script}'@add2ConfigEnv '${keyname}' '${value}'"
             else
-                CONFIG_ENV_REVISION_HISTORY[${keyname}]="CONFIG_DEFAULTS_ENV[${keyname}] => ${caller_script}@add2ConfigEnv '${keyname}' '${value}'"
+                CONFIG_ENV_LINEAGE[${keyname}]="'CONFIG_DEFAULTS_ENV[${keyname}]':'${CONFIG_DEFAULTS_ENV[${keyname}]}' => '${caller_script}'@add2ConfigEnv '${keyname}' '${value}'"
             fi
 
             CONFIG_ADD_ENV[${keyname}]="${value}"
         else
-            echo "WARNING: SKIPPING config addition to env for config: '${keyname}' as only configs for which defaults are set can be used within the process"
+            echo "WARNING: SKIPPING CONFIG ADDITION TO ENV FOR CONFIG: '${keyname}' AS ONLY CONFIGS FOR WHICH DEFAULTS ARE SET CAN BE USED WITHIN THE PROCESS" 1>&2
         fi
     }
 
-    refreshFinalConfigEnv() {
+    refreshConfigEnv() {
+        local caller_script="$(caller | cut -d' ' -f2-)"
+        echo "INFO: Config Refresh Initiated From: '${caller_script}'" 1>&2
         for k in "${!CONFIG_DEFAULTS_ENV[@]}"
         do
             if [[ ${CONFIG_ADD_ENV[${k}]+_} ]]
@@ -289,64 +248,134 @@ EOF
         done
     }
 
-    # TO BE DEFINED AFTER LOG FILE DEFINITION
-    showConfigs() {
-        local container_name="${1}"
-        echo -e "\n# Begin show configs: ${container_name} >>>"
-        for k in $(eval echo "\${!${container_name}[@]}")
-        do
-            echo -e "\t INFO: ${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
-        done
-        echo -e "# End show configs: ${container_name} <<<\n"
+   evalConfig() {
+        refreshConfigEnv
+        local keyname="${1}"
+        local caller_script="$(caller | cut -d' ' -f2-)"
+
+        if [[ ${CONFIG_ENV[${keyname}]+_} ]]
+        then
+            if [[ ${CONFIG_EVAL_LINEAGE[${keyname}]+_} ]]
+            then
+                CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #Begin Eval >>> 'CONFIG_ENV[${keyname}]':'${CONFIG_ENV[${keyname}]}' => '${caller_script}'@evalConfig '${keyname}'"
+            else
+                CONFIG_EVAL_LINEAGE[${keyname}]="#Begin Eval >>> 'CONFIG_ENV[${keyname}]':'${CONFIG_ENV[${keyname}]}' => '${caller_script}'@evalConfig '${keyname}'"
+            fi
+
+            local curr_value="${CONFIG_ENV[${keyname}]}"
+            local next_value=""
+
+            while [[ "${curr_value}" =~ .*\$\{[^{\}]*}.* ]]
+            do
+                next_value="$(eval echo "${curr_value}")"
+                CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} -> ${next_value}"
+                if [[ "${next_value}" == "${curr_value}" ]]
+                then
+                    break
+                else
+                    curr_value="${next_value}"
+                fi
+            done
+
+            CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #End Eval <<<"
+            CONFIG_EVAL_ENV[${keyname}]="${curr_value}"
+        else
+            help "ERROR: Invalid Config Reference: CONFIG_ENV[${keyname}]"
+        fi
     }
-# <<< Functions for setting, merging & resolving configs & dynamic templates. <<<
+
+    # To Be Defined After Log File Definition
+    showConfigs() {
+        for arg in "$@"
+        do
+            local container_name="${arg}"
+            echo -e "\n# Begin Show Configs: ${container_name} >>>"
+            for k in $(eval echo "\${!${container_name}[@]}")
+            do
+                echo -e "\t INFO: ${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
+            done
+            echo -e "# End Show Configs: ${container_name} <<<\n"
+        done
+    }
+    # showConfigs PARAM_ENV RUN_ENV VAR_ENV CONFIG_ENV CONFIG_EVAL_ENV CONFIG_ENV_LINEAGE CONFIG_EVAL_LINEAGE
+# <<< Functions For Setting, Merging & Resolving Configs & Dynamic Templates. <<<
 
 
+# >>> Setup Default Config Env For The Process >>>
+# Only These Config Overrides Will Get Picked From The Env
+# So If Default Is Not Available But We Still Want To Pick 
+# From Env Then A Null Must Be Specified e.g. CONFIG_DEFAULTS_ENV["script.conf.unknown"]="NULL"
+##############################################################################
+    CONFIG_DEFAULTS_ENV["script.read.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
+    
+    CONFIG_DEFAULTS_ENV["script.write.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
+# <<< Setup Default Config Env For The Process. <<<
+
+
+# >>> Source Root Config File >>>
+##############################################################################
+    if [[ "${PARAM_ENV["script.config.rootfile"]+_}" ]]
+    then
+        echo "INFO: Sourcing Param Env Root Config File: '${PARAM_ENV["script.config.rootfile"]}'"
+        source "${PARAM_ENV["script.config.rootfile"]}"
+
+        refreshConfigEnv
+    fi
+# <<< Source Root Config File. <<<
 
 # >>> Prepare runtime env using parameters >>>
 ##############################################################################
-    # Set current batch id, generate new id if the batch file is not already present
-    __batchid_dir="${__app_root_dir%%/}/app-batch-info/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
-    [[ -d  "${__batchid_dir}" ]] || mkdir -p "${__batchid_dir}"
-    __batchid_file="${__batchid_dir%%/}/current-batchid.conf"
+    RUN_ENV["script.process.app.rootdir"]="${CONFIG_ENV["script.write.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}"
+    # Set Current Batch Id, Generate New Id If The Batch File Is Not Already Present
+    RUN_ENV["script.app.batchid.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-batch-info/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
 
-    __is_set_batch_id="true"
-    if [[ -s "${__batchid_file}" ]]
+    [[ -d  "${RUN_ENV["script.app.batchid.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.batchid.dir"]}"
+    RUN_ENV["script.app.batchid.file"]="${RUN_ENV["script.app.batchid.dir"]%%/}/current-batchid.conf"
+
+    RUN_ENV["script.app.batchid.set.flag"]="TRUE"
+    if [[ -s "${RUN_ENV["script.app.batchid.file"]}" ]]
     then
-        CURRENT_BATCH_ID="$( cat "${__batchid_file}" | sed -e '/^\s*$/d' -e '/\s*#.*$/d' | tail -1 )"
-        if [[ "${CURRENT_BATCH_ID:-}" == "" ]]
+        RUN_ENV["script.app.batchid.val"]="$( cat "${RUN_ENV["script.app.batchid.file"]}" | sed -e '/^\s*$/d' -e '/\s*#.*$/d' | tail -1 )"
+        if [[ "${RUN_ENV["script.app.batchid.val"]:-}" == "" ]]
         then
-            export CURRENT_BATCH_ID="${RUN_ENV["script.run.date.yyyymmdd"]}"
-            echo "${CURRENT_BATCH_ID}" > "${__batchid_file}"
+            RUN_ENV["script.app.batchid.val"]="${RUN_ENV["script.run.date.yyyymmdd"]}"
+            echo "${RUN_ENV["script.app.batchid.val"]}" > "${RUN_ENV["script.app.batchid.file"]}"
         else
-            __is_set_batch_id="false"
-            export CURRENT_BATCH_ID="${CURRENT_BATCH_ID}"
+            RUN_ENV["script.app.batchid.set.flag"]="FALSE"
+            RUN_ENV["script.app.batchid.val"]="${RUN_ENV["script.app.batchid.val"]}"
         fi
     else
-        export CURRENT_BATCH_ID="${RUN_ENV["script.run.date.yyyymmdd"]}"
-        echo "${CURRENT_BATCH_ID}" > "${__batchid_file}"
+        RUN_ENV["script.app.batchid.val"]="${RUN_ENV["script.run.date.yyyymmdd"]}"
+        echo "${RUN_ENV["script.app.batchid.val"]}" > "${RUN_ENV["script.app.batchid.file"]}"
     fi
 
-    __log_dir="${__app_root_dir%%/}/app-log/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}/${CURRENT_BATCH_ID}"
-    [[ -d  "${__log_dir}" ]] || mkdir -p "${__log_dir}"
-    __log_file="${__log_dir%%/}/${RUN_ENV["script.run.uid"]}.log"
-    touch "${__log_file}"
+    RUN_ENV["script.app.log.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-log/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.app.batchid.val"]}"
+
+    [[ -d  "${RUN_ENV["script.app.log.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.log.dir"]}"
+
+    RUN_ENV["script.app.log.file"]="${RUN_ENV["script.app.log.dir"]%%/}/${RUN_ENV["script.run.unique.runid"]}.log"
+    touch "${RUN_ENV["script.app.log.file"]}"
 
 
-    __tmp_dir="${__app_root_dir%%/}/app-tmp/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.run.uid"]}.tmp-dir"
-    [[ -d  "${__tmp_dir}" ]] || mkdir -p "${__tmp_dir}"
+    RUN_ENV["script.app.tmp.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-tmp/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.run.unique.runid"]}.tmp-dir"
+    
+    [[ -d  "${RUN_ENV["script.app.tmp.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.tmp.dir"]}"
 
-    __common_env_dir="${__app_root_dir%%/}/app-conf/common/${PARAM_ENV["script.runtime.envname"]}"
-    __app_env_dir="${__app_root_dir%%/}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
-    __script_env_dir="${__app_root_dir%%/}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}"
-    __param_env_dir="${__app_root_dir%%/}/app-param/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
-    [[ -d  "${__common_env_dir}" ]] || mkdir -p "${__common_env_dir}"
-    [[ -d  "${__app_env_dir}" ]] || mkdir -p "${__app_env_dir}"
-    [[ -d  "${__script_env_dir}" ]] || mkdir -p "${__script_env_dir}"
+    RUN_ENV["app.common.config.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-conf/common/${PARAM_ENV["script.runtime.envname"]}"
+
+    RUN_ENV["app.config.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
+
+    RUN_ENV["app.script.config.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}"
+
+    __param_env_dir="${RUN_ENV["script.process.app.rootdir"]%%/}/app-param/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
+    
+    [[ -d  "${RUN_ENV["app.common.config.dir"]}" ]] || mkdir -p "${RUN_ENV["app.common.config.dir"]}"
+    [[ -d  "${RUN_ENV["app.config.dir"]}" ]] || mkdir -p "${RUN_ENV["app.config.dir"]}"
+    [[ -d  "${RUN_ENV["app.script.config.dir"]}" ]] || mkdir -p "${RUN_ENV["app.script.config.dir"]}"
     [[ -d  "${__param_env_dir}" ]] || mkdir -p "${__param_env_dir}"
 
     
-     [[ ${PARAM_ENV["script.config.rootfile"]+_} ]] || { echo "WARNING: PARAM_ENV["script.config.rootfile"] not defined, using default"; PARAM_ENV["script.config.rootfile"]="${__param_env_dir%%/}/${RUN_ENV["script.file.base"]}.param.sh"; touch "${PARAM_ENV["script.config.rootfile"]}"; }
+     [[ ${PARAM_ENV["script.config.rootfile"]+_} ]] || { echo "WARNING: PARAM_ENV["script.config.rootfile"] IS NOT DEFINED, SO USING DEFAULT"; PARAM_ENV["script.config.rootfile"]="${__param_env_dir%%/}/${RUN_ENV["script.file.base"]}.param.sh"; touch "${PARAM_ENV["script.config.rootfile"]}"; }
 
      
 # <<< Prepare runtime env using parameters <<<
@@ -395,7 +424,7 @@ NO_COLOR="${NO_COLOR:-}"    # true = disable color. otherwise autodetected
     local log_line=""
 
     while IFS=$'\n' read -r log_line; do
-        echo -e "$(date -u +"%Y-%m-%d %H:%M:%S UTC") $(printf "[%9s]" "${log_level}") ${log_line}" >> "${__log_file}"
+        echo -e "$(date -u +"%Y-%m-%d %H:%M:%S UTC") $(printf "[%9s]" "${log_level}") ${log_line}" >> "${RUN_ENV["script.app.log.file"]}"
         echo -e "$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${color}$(printf "[%9s]" "${log_level}")${color_reset} ${log_line}" 1>&2
     done <<< "${@:-}"
     }
@@ -414,8 +443,8 @@ NO_COLOR="${NO_COLOR:-}"    # true = disable color. otherwise autodetected
 # >>> Signal trapping and backtracing >>>
 ##############################################################################
     function __cleanup_before_exit () {
-        alert "Deleting the temp dir using the command: 'rm -fr ${__tmp_dir}'"
-        rm -fr "${__tmp_dir}"
+        alert "Deleting the temp dir using the command: 'rm -fr ${RUN_ENV["script.app.tmp.dir"]}'"
+        rm -fr "${RUN_ENV["script.app.tmp.dir"]}"
         info "Cleaning up. Done"
     }
     trap __cleanup_before_exit EXIT
@@ -443,58 +472,58 @@ NO_COLOR="${NO_COLOR:-}"    # true = disable color. otherwise autodetected
 
 # >>> Print env info and source configs >>>
 ##############################################################################
-[[ "${__is_set_batch_id}" == "true"  ]] && info "Setting CURRENT_BATCH_ID: ${CURRENT_BATCH_ID}"
-export CURRENT_BATCH_ID="${CURRENT_BATCH_ID}"
+[[ "${RUN_ENV["script.app.batchid.set.flag"]}" == "TRUE"  ]] && info "Setting RUN_ENV["script.app.batchid.val"]: ${RUN_ENV["script.app.batchid.val"]}"
+export RUN_ENV["script.app.batchid.val"]="${RUN_ENV["script.app.batchid.val"]}"
 
 info "RUN_ENV["script.dir.path"]: ${RUN_ENV["script.dir.path"]}"
 info "RUN_ENV["script.file.path"]: ${RUN_ENV["script.file.path"]}"
 info "RUN_ENV["script.file.name"]: ${RUN_ENV["script.file.name"]}"
 info "RUN_ENV["script.file.base"]: ${RUN_ENV["script.file.base"]}"
 info "RUN_ENV["script.run.invocation"]: ${RUN_ENV["script.run.invocation"]}"
-info "__app_root_dir: ${__app_root_dir}"
+info "RUN_ENV["script.process.app.rootdir"]: ${RUN_ENV["script.process.app.rootdir"]}"
 
 info "RUN_ENV["script.run.procid"]: ${RUN_ENV["script.run.procid"]}"
 info "RUN_ENV["script.run.dateid"]: ${RUN_ENV["script.run.dateid"]}"
 info "RUN_ENV["script.run.date.yyyymm"]: ${RUN_ENV["script.run.date.yyyymm"]}"
 info "RUN_ENV["script.run.date.yyyymmdd"]: ${RUN_ENV["script.run.date.yyyymmdd"]}"
-info "RUN_ENV["script.run.uid"]: ${RUN_ENV["script.run.uid"]}"
+info "RUN_ENV["script.run.unique.runid"]: ${RUN_ENV["script.run.unique.runid"]}"
 
-info "__batchid_dir: ${__batchid_dir}"
-info "__batchid_file: ${__batchid_file}"
-info "__is_set_batch_id: ${__is_set_batch_id}"
-info "__log_dir: ${__log_dir}"
-info "__log_file: ${__log_file}"
-info "__tmp_dir: ${__tmp_dir}"
-info "__common_env_dir: ${__common_env_dir}"
-info "__app_env_dir: ${__app_env_dir}"
-info "__script_env_dir: ${__script_env_dir}"
+info "RUN_ENV["script.app.batchid.dir"]: ${RUN_ENV["script.app.batchid.dir"]}"
+info "RUN_ENV["script.app.batchid.file"]: ${RUN_ENV["script.app.batchid.file"]}"
+info "RUN_ENV["script.app.batchid.set.flag"]: ${RUN_ENV["script.app.batchid.set.flag"]}"
+info "RUN_ENV["script.app.log.dir"]: ${RUN_ENV["script.app.log.dir"]}"
+info "RUN_ENV["script.app.log.file"]: ${RUN_ENV["script.app.log.file"]}"
+info "RUN_ENV["script.app.tmp.dir"]: ${RUN_ENV["script.app.tmp.dir"]}"
+info "RUN_ENV["app.common.config.dir"]: ${RUN_ENV["app.common.config.dir"]}"
+info "RUN_ENV["app.config.dir"]: ${RUN_ENV["app.config.dir"]}"
+info "RUN_ENV["app.script.config.dir"]: ${RUN_ENV["app.script.config.dir"]}"
 info "__param_env_dir: ${__param_env_dir}"
 
 info "PARAM_ENV["script.process.appname"]: ${PARAM_ENV["script.process.appname"]}"
 info "PARAM_ENV["script.runtime.envname"] : ${PARAM_ENV["script.runtime.envname"]}"
 info "PARAM_ENV["script.config.rootfile"] : ${PARAM_ENV["script.config.rootfile"]}"
 info "PARAM_ENV["script.debug.mode"]: ${PARAM_ENV["script.debug.mode"]}"
-info "CURRENT_BATCH_ID: ${CURRENT_BATCH_ID}"
+info "RUN_ENV["script.app.batchid.val"]: ${RUN_ENV["script.app.batchid.val"]}"
 
 
 # source common env 
-for file in $(find "${__common_env_dir}" -maxdepth 1 -name '*.sh'); 
+for file in $(find "${RUN_ENV["app.common.config.dir"]}" -maxdepth 1 -name '*.sh'); 
 do
-    notice "Sourcing file: '${file}' from __common_env_dir: '${__common_env_dir}'"
+    notice "Sourcing file: '${file}' from RUN_ENV["app.common.config.dir"]: '${RUN_ENV["app.common.config.dir"]}'"
     source "${file}"; 
 done
 
 # source app specific envs
-for file in $(find "${__app_env_dir}" -maxdepth 1 -name '*.sh'); 
+for file in $(find "${RUN_ENV["app.config.dir"]}" -maxdepth 1 -name '*.sh'); 
 do
-    notice "Sourcing file: '${file}' from __app_env_dir: '${__app_env_dir}'"
+    notice "Sourcing file: '${file}' from RUN_ENV["app.config.dir"]: '${RUN_ENV["app.config.dir"]}'"
     source "${file}"; 
 done
 
 # source script specific env
-for file in $(find "${__script_env_dir}" -maxdepth 1 -name '*.sh'); 
+for file in $(find "${RUN_ENV["app.script.config.dir"]}" -maxdepth 1 -name '*.sh'); 
 do
-    notice "Sourcing file: '${file}' from __script_env_dir: '${__script_env_dir}'"
+    notice "Sourcing file: '${file}' from RUN_ENV["app.script.config.dir"]: '${RUN_ENV["app.script.config.dir"]}'"
     source "${file}"; 
 done
 
