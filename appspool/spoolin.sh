@@ -292,7 +292,7 @@ EOF
         if [[ -f "${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.appname"]}.rootconfig.conf.sh" ]]
         then
             PARAM_ENV["script.config.rootfile"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.appname"]}.rootconfig.conf.sh"
-            alert "PARAM_ENV[script.config.rootfile] Is Set To (USING DEFAULT): '${PARAM_ENV["script.config.rootfile"]}'"
+            alert "PARAM_ENV[script.config.rootfile] IS SET TO (USING DEFAULT): '${PARAM_ENV["script.config.rootfile"]}'"
         fi
     fi
 
@@ -300,39 +300,6 @@ EOF
     info "All Remaining Params Are Loaded To PARAM_ENV[script.nonargs.paramlist]: '${PARAM_ENV["script.nonargs.paramlist"]}'"
 # <<< Parse Parameters. <<<
 
-
-# >>> Signal trapping and backtracing >>>
-##############################################################################
-    function __cleanup_before_exit () {
-        if [[ ${RUN_ENV["script.app.tmp.dir"]+_} ]]
-        then
-            alert "Deleting the temp dir using the command: 'rm -fr ${RUN_ENV["script.app.tmp.dir"]}'"
-            rm -fr "${RUN_ENV["script.app.tmp.dir"]}"
-        fi
-        
-        info "Cleaning up. Done"
-    }
-    trap __cleanup_before_exit EXIT
-
-    # requires `set -o errtrace`
-    __err_report() {
-        local error_code=${?}
-        error "Error in ${RUN_ENV["script.file.path"]} in function ${1} on line ${2}"
-        exit ${error_code}
-    }
-    # Uncomment the following line for always providing an error backtrace
-    trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
-
-    if [[ "${PARAM_ENV["script.debug.mode"]}" == "ON" ]]
-    then
-        echo "Starting process in PARAM_ENV["script.debug.mode"]: ${PARAM_ENV["script.debug.mode"]}"
-        set -o xtrace
-        PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
-        LOG_LEVEL="7"
-        # Enable error backtracing
-        trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
-    fi
-# <<< Signal trapping and backtracing <<<
 
 # >>> Functions For Pretty Printing, Setting, Merging & Resolving Configs & Dynamic Templates >>>
 ##############################################################################
@@ -373,7 +340,7 @@ EOF
     
     endFuncInfo() {
         subtractIndent
-
+        info "##############################################################################"
         info "${VAR_ENV["script.current.print.indent"]}# <<< End Function - ${1}. <<<"
         
         subtractIndent  
@@ -485,19 +452,76 @@ EOF
         for arg in ${print_config_list}
         do
             local container_name="${arg}"
-            info "\n# Begin Show Configs: ${container_name} >>>"
+            info "\n# >>> Begin Show Configs: ${container_name} >>>"
             addIndent
             for k in $(eval echo "\${!${container_name}[@]}")
             do
                 info "${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
             done
             subtractIndent
-            info "# End Show Configs: ${container_name}. <<<\n"
+            info "# <<< End Show Configs: ${container_name}. <<<\n"
         done
 
         endFuncInfo "${function_signature}"
     }
 # <<< Functions For Pretty Printing, Setting, Merging & Resolving Configs & Dynamic Templates. <<<
+
+
+# >>> Signal trapping and backtracing >>>
+##############################################################################
+    function __cleanup_before_exit () {
+        local final_return_status="${?}"
+        
+        local caller_script="$(caller | cut -d' ' -f2-)"
+        local function_trace="$(getFuncCallTrace)"
+        local function_signature="$( echo "'${caller_script}@${function_trace}: ${@}'" | sed "s/'\s*$/'/1" )"
+        beginFuncInfo "${function_signature}"
+
+
+        if [[ ${RUN_ENV["script.app.tmp.dir"]+_} ]]
+        then
+            alert "DELETING THE TEMP DIR USING THE COMMAND: 'rm -fr ${RUN_ENV["script.app.tmp.dir"]}'"
+            rm -fr "${RUN_ENV["script.app.tmp.dir"]}"
+        fi
+        # Add logic for deletion of any leftover temp files
+        # Add logic for deletion of log older than retention period
+        info "Cleaning up. Done"
+
+        info "Printing The Complete Config Env Used During This Run Before Exit:"
+        showConfigs
+        
+        endFuncInfo "${function_signature}"
+
+        subtractIndent
+        if [[ "${final_return_status}" == "0" ]]
+        then
+            info "#  <<< END SCRIPT <<SUCCESS>>: '${RUN_ENV["script.run.invocation"]}'. <<<"
+        else
+            alert "#  <<< END SCRIPT <<FAILURE>>: '${RUN_ENV["script.run.invocation"]}'. <<<"
+        fi
+    }
+
+    trap __cleanup_before_exit EXIT
+
+    # requires `set -o errtrace`
+    __err_report() {
+        local error_code=${?}
+        error "Error in ${RUN_ENV["script.file.path"]} in function ${1} on line ${2}"
+        exit ${error_code}
+    }
+    # Uncomment the following line for always providing an error backtrace
+    trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+
+    if [[ "${PARAM_ENV["script.debug.mode"]}" == "ON" ]]
+    then
+        echo "Starting process in PARAM_ENV["script.debug.mode"]: ${PARAM_ENV["script.debug.mode"]}"
+        set -o xtrace
+        PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+        LOG_LEVEL="7"
+        # Enable error backtracing
+        trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+    fi
+# <<< Signal trapping and backtracing <<<
 
 
 # >>> Setup Default Config Env For The Process >>>
@@ -508,6 +532,8 @@ EOF
     CONFIG_DEFAULTS_ENV["script.read.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
     
     CONFIG_DEFAULTS_ENV["script.write.rootdir"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.name"]}"
+
+    
 # <<< Setup Default Config Env For The Process. <<<
 
 
@@ -524,12 +550,11 @@ EOF
 
 # >>> Prepare runtime env using parameters >>>
 ##############################################################################
-    RUN_ENV["script.process.app.rootdir"]="${CONFIG_ENV["script.write.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}"
     # Set Current Batch Id, Generate New Id If The Batch File Is Not Already Present
-    RUN_ENV["script.app.batchid.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-batch-info/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
+    RUN_ENV["script.app.batchid.dir"]="${CONFIG_ENV["script.write.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-batch-info/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.run.whoami"]}"
 
     [[ -d  "${RUN_ENV["script.app.batchid.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.batchid.dir"]}"
-    RUN_ENV["script.app.batchid.file"]="${RUN_ENV["script.app.batchid.dir"]%%/}/current-batchid.conf"
+    RUN_ENV["script.app.batchid.file"]="${RUN_ENV["script.app.batchid.dir"]%%/}/current-batchid.env"
 
     RUN_ENV["script.app.batchid.set.flag"]="TRUE"
     if [[ -s "${RUN_ENV["script.app.batchid.file"]}" ]]
@@ -548,103 +573,80 @@ EOF
         echo "${RUN_ENV["script.app.batchid.val"]}" > "${RUN_ENV["script.app.batchid.file"]}"
     fi
 
-    RUN_ENV["script.app.log.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-log/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.app.batchid.val"]}"
+    RUN_ENV["script.app.log.dir"]="${CONFIG_ENV["script.write.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-log/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.run.whoami"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.app.batchid.val"]}"
+
+    RUN_ENV["script.app.log.current.dir"]="${CONFIG_ENV["script.write.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-log/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.run.whoami"]}/${RUN_ENV["script.file.base"]}/current"
 
     [[ -d  "${RUN_ENV["script.app.log.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.log.dir"]}"
+    [[ -d  "${RUN_ENV["script.app.log.current.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.log.current.dir"]}"
 
     RUN_ENV["script.app.log.file"]="${RUN_ENV["script.app.log.dir"]%%/}/${RUN_ENV["script.run.unique.runid"]}.log"
+    RUN_ENV["script.app.log.current.pointer.file"]="${RUN_ENV["script.app.log.current.dir"]%%/}/current.log"
+    RUN_ENV["script.app.log.previous.pointer.file"]="${RUN_ENV["script.app.log.current.dir"]%%/}/previous.log"
     touch "${RUN_ENV["script.app.log.file"]}"
 
+    if [[ -f "${RUN_ENV["script.app.log.current.pointer.file"]}" ]]
+    then
+        ln -nvfs "$( readlink "${RUN_ENV["script.app.log.current.pointer.file"]}" )" "${RUN_ENV["script.app.log.previous.pointer.file"]}"
+    fi
+    ln -nvfs "${RUN_ENV["script.app.log.file"]}" "${RUN_ENV["script.app.log.current.pointer.file"]}"
 
-    RUN_ENV["script.app.tmp.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-tmp/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.run.unique.runid"]}.tmp-dir"
+    RUN_ENV["script.app.tmp.dir"]="${CONFIG_ENV["script.write.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-tmp/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.run.whoami"]}/${RUN_ENV["script.file.base"]}/${RUN_ENV["script.run.unique.runid"]}.tmp.dir"
     
     [[ -d  "${RUN_ENV["script.app.tmp.dir"]}" ]] || mkdir -p "${RUN_ENV["script.app.tmp.dir"]}"
 
-    RUN_ENV["app.common.config.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-conf/common/${PARAM_ENV["script.runtime.envname"]}"
+    RUN_ENV["app.common.config.dir"]="${CONFIG_ENV["script.read.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-conf/common/${PARAM_ENV["script.runtime.envname"]}"
 
-    RUN_ENV["app.config.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
+    RUN_ENV["app.config.dir"]="${CONFIG_ENV["script.read.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
 
-    RUN_ENV["app.script.config.dir"]="${RUN_ENV["script.process.app.rootdir"]%%/}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}"
-
-    __param_env_dir="${RUN_ENV["script.process.app.rootdir"]%%/}/app-param/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}"
+    RUN_ENV["app.script.config.dir"]="${CONFIG_ENV["script.read.rootdir"]%%/}/${PARAM_ENV["script.process.name"]}/app-conf/${PARAM_ENV["script.process.appname"]}/${PARAM_ENV["script.runtime.envname"]}/${RUN_ENV["script.file.base"]}"
     
     [[ -d  "${RUN_ENV["app.common.config.dir"]}" ]] || mkdir -p "${RUN_ENV["app.common.config.dir"]}"
     [[ -d  "${RUN_ENV["app.config.dir"]}" ]] || mkdir -p "${RUN_ENV["app.config.dir"]}"
     [[ -d  "${RUN_ENV["app.script.config.dir"]}" ]] || mkdir -p "${RUN_ENV["app.script.config.dir"]}"
-    [[ -d  "${__param_env_dir}" ]] || mkdir -p "${__param_env_dir}"
 
-    
-     [[ ${PARAM_ENV["script.config.rootfile"]+_} ]] || { echo "WARNING: PARAM_ENV["script.config.rootfile"] IS NOT DEFINED, SO USING DEFAULT"; PARAM_ENV["script.config.rootfile"]="${__param_env_dir%%/}/${RUN_ENV["script.file.base"]}.param.sh"; touch "${PARAM_ENV["script.config.rootfile"]}"; }
+    notice "Log File: ${RUN_ENV["script.app.log.file"]}"
+    notice "Log Current Run Softlink Pointer File: ${RUN_ENV["script.app.log.current.pointer.file"]}"
+    [[ -f "${RUN_ENV["script.app.log.previous.pointer.file"]}" ]] && notice "Log Previous Run Softlink Pointer File: ${RUN_ENV["script.app.log.previous.pointer.file"]}"
 
-     
+    if [[ "${PARAM_ENV["script.verbose.mode"]}" == "ON" ]]
+    then
+        alert "STARTING PROCESS IN VERBOSE MODE"
+    else
+        exec 2>> "${RUN_ENV["script.app.log.file"]}"
+    fi
 # <<< Prepare runtime env using parameters <<<
-
-
-
-
-
 
 
 # >>> Print env info and source configs >>>
 ##############################################################################
-[[ "${RUN_ENV["script.app.batchid.set.flag"]}" == "TRUE"  ]] && info "Setting RUN_ENV["script.app.batchid.val"]: ${RUN_ENV["script.app.batchid.val"]}"
-export RUN_ENV["script.app.batchid.val"]="${RUN_ENV["script.app.batchid.val"]}"
+    info "#  >>> BEGIN SCRIPT: '${RUN_ENV["script.run.invocation"]}' >>>"
+    addIndent
+    showConfigs
 
-info "RUN_ENV["script.dir.path"]: ${RUN_ENV["script.dir.path"]}"
-info "RUN_ENV["script.file.path"]: ${RUN_ENV["script.file.path"]}"
-info "RUN_ENV["script.file.name"]: ${RUN_ENV["script.file.name"]}"
-info "RUN_ENV["script.file.base"]: ${RUN_ENV["script.file.base"]}"
-info "RUN_ENV["script.run.invocation"]: ${RUN_ENV["script.run.invocation"]}"
-info "RUN_ENV["script.process.app.rootdir"]: ${RUN_ENV["script.process.app.rootdir"]}"
+    [[ "${RUN_ENV["script.app.batchid.set.flag"]}" == "TRUE"  ]] && alert "SETTING RUN_ENV["script.app.batchid.val"]: ${RUN_ENV["script.app.batchid.val"]}"
+    export RUN_ENV["script.app.batchid.val"]="${RUN_ENV["script.app.batchid.val"]}"
 
-info "RUN_ENV["script.run.procid"]: ${RUN_ENV["script.run.procid"]}"
-info "RUN_ENV["script.run.dateid"]: ${RUN_ENV["script.run.dateid"]}"
-info "RUN_ENV["script.run.date.yyyymm"]: ${RUN_ENV["script.run.date.yyyymm"]}"
-info "RUN_ENV["script.run.date.yyyymmdd"]: ${RUN_ENV["script.run.date.yyyymmdd"]}"
-info "RUN_ENV["script.run.unique.runid"]: ${RUN_ENV["script.run.unique.runid"]}"
+    # source common env 
+    for file in $(find "${RUN_ENV["app.common.config.dir"]}" -maxdepth 1 -name '*.sh'); 
+    do
+        notice "Sourcing file: '${file}' from RUN_ENV["app.common.config.dir"]: '${RUN_ENV["app.common.config.dir"]}'"
+        source "${file}"; 
+    done
 
-info "RUN_ENV["script.app.batchid.dir"]: ${RUN_ENV["script.app.batchid.dir"]}"
-info "RUN_ENV["script.app.batchid.file"]: ${RUN_ENV["script.app.batchid.file"]}"
-info "RUN_ENV["script.app.batchid.set.flag"]: ${RUN_ENV["script.app.batchid.set.flag"]}"
-info "RUN_ENV["script.app.log.dir"]: ${RUN_ENV["script.app.log.dir"]}"
-info "RUN_ENV["script.app.log.file"]: ${RUN_ENV["script.app.log.file"]}"
-info "RUN_ENV["script.app.tmp.dir"]: ${RUN_ENV["script.app.tmp.dir"]}"
-info "RUN_ENV["app.common.config.dir"]: ${RUN_ENV["app.common.config.dir"]}"
-info "RUN_ENV["app.config.dir"]: ${RUN_ENV["app.config.dir"]}"
-info "RUN_ENV["app.script.config.dir"]: ${RUN_ENV["app.script.config.dir"]}"
-info "__param_env_dir: ${__param_env_dir}"
+    # source app specific envs
+    for file in $(find "${RUN_ENV["app.config.dir"]}" -maxdepth 1 -name '*.sh'); 
+    do
+        notice "Sourcing file: '${file}' from RUN_ENV["app.config.dir"]: '${RUN_ENV["app.config.dir"]}'"
+        source "${file}"; 
+    done
 
-info "PARAM_ENV["script.process.appname"]: ${PARAM_ENV["script.process.appname"]}"
-info "PARAM_ENV["script.runtime.envname"] : ${PARAM_ENV["script.runtime.envname"]}"
-info "PARAM_ENV["script.config.rootfile"] : ${PARAM_ENV["script.config.rootfile"]}"
-info "PARAM_ENV["script.debug.mode"]: ${PARAM_ENV["script.debug.mode"]}"
-info "RUN_ENV["script.app.batchid.val"]: ${RUN_ENV["script.app.batchid.val"]}"
-
-
-# source common env 
-for file in $(find "${RUN_ENV["app.common.config.dir"]}" -maxdepth 1 -name '*.sh'); 
-do
-    notice "Sourcing file: '${file}' from RUN_ENV["app.common.config.dir"]: '${RUN_ENV["app.common.config.dir"]}'"
-    source "${file}"; 
-done
-
-# source app specific envs
-for file in $(find "${RUN_ENV["app.config.dir"]}" -maxdepth 1 -name '*.sh'); 
-do
-    notice "Sourcing file: '${file}' from RUN_ENV["app.config.dir"]: '${RUN_ENV["app.config.dir"]}'"
-    source "${file}"; 
-done
-
-# source script specific env
-for file in $(find "${RUN_ENV["app.script.config.dir"]}" -maxdepth 1 -name '*.sh'); 
-do
-    notice "Sourcing file: '${file}' from RUN_ENV["app.script.config.dir"]: '${RUN_ENV["app.script.config.dir"]}'"
-    source "${file}"; 
-done
-
-# source param env
-notice "Sourcing PARAM_ENV["script.config.rootfile"]: '${PARAM_ENV["script.config.rootfile"]}'"
-source "${PARAM_ENV["script.config.rootfile"]}"
+    # source script specific env
+    for file in $(find "${RUN_ENV["app.script.config.dir"]}" -maxdepth 1 -name '*.sh'); 
+    do
+        notice "Sourcing file: '${file}' from RUN_ENV["app.script.config.dir"]: '${RUN_ENV["app.script.config.dir"]}'"
+        source "${file}"; 
+    done
 # <<< Print env info and source configs <<<
 
 
