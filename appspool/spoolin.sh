@@ -142,6 +142,7 @@ NO_COLOR="${NO_COLOR:-}"    # true = disable color. otherwise autodetected
         if [[ ${RUN_ENV["script.app.log.file"]+_} ]]
         then
             echo -e "${VAR_ENV["script.current.print.indent"]}$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${color}$(printf "[%9s]" "${log_level}")${color_reset} ${log_line}"
+            
             if [[ "${PARAM_ENV["script.verbose.mode"]}" == "ON" ]]
             then
                 echo -e "${VAR_ENV["script.current.print.indent"]}$(date -u +"%Y-%m-%d %H:%M:%S UTC") $(printf "[%9s]" "${log_level}") ${log_line}" >> "${RUN_ENV["script.app.log.file"]}"
@@ -543,9 +544,8 @@ EOF
     then
         info "Sourcing Param Env Root Config File: '${PARAM_ENV["script.config.rootfile"]}'"
         source "${PARAM_ENV["script.config.rootfile"]}"
-
-        refreshConfigEnv
     fi
+    refreshConfigEnv
 # <<< Source Root Config File. <<<
 
 # >>> Prepare runtime env using parameters >>>
