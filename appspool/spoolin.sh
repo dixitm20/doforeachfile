@@ -34,9 +34,13 @@ fi
 
 # >>> Define Container Dictionaries For All Variables Used By The Main Script >>>
 ##############################################################################
-    unset PARAM_ENV RUN_ENV CONFIG_ADD_ENV CONFIG_ENV_LINEAGE
-    unset CONFIG_DEFAULTS_ENV CONFIG_EVAL_LINEAGE VAR_ENV
-    
+    __env_dict_list="PARAM_ENV RUN_ENV CONFIG_DEFAULTS_ENV CONFIG_ADD_ENV CONFIG_ENV_LINEAGE CONFIG_ENV CONFIG_EVAL_ENV CONFIG_EVAL_LINEAGE VAR_ENV"
+
+    for dict in ${__env_dict_list}
+    do
+        unset ${dict}
+    done
+
     # Parameters Passed To The Script Form The PARAM_ENV, This Will Be Available For Read Only Usage 
     # In All Sourced Scripts And Should Not Be Changed In Any Of The Sourced Scripts
     declare -A PARAM_ENV
@@ -85,6 +89,82 @@ fi
 # <<< Set Magic Variables For Current File, Directory, OS etc. <<<
 
 
+# >>> Set VAR_ENV variables defaults used within the script  >>>
+##############################################################################
+    VAR_ENV["script.current.print.indent"]=""
+# <<< Set variables defaults used within the script. <<<
+
+
+# Define the environment variables (and their defaults) that this script depends on
+LOG_LEVEL="${LOG_LEVEL:-6}" # 7 = debug -> 0 = emergency
+NO_COLOR="${NO_COLOR:-}"    # true = disable color. otherwise autodetected
+
+
+# >>> Logging & Print Functions >>>
+##############################################################################
+    function __log () {
+    local log_level="${1}"
+    shift
+
+    # shellcheck disable=SC2034
+    local color_debug="\\x1b[35m"
+    # shellcheck disable=SC2034
+    local color_info="\\x1b[32m"
+    # shellcheck disable=SC2034
+    local color_notice="\\x1b[34m"
+    # shellcheck disable=SC2034
+    local color_warning="\\x1b[33m"
+    # shellcheck disable=SC2034
+    local color_error="\\x1b[31m"
+    # shellcheck disable=SC2034
+    local color_critical="\\x1b[1;31m"
+    # shellcheck disable=SC2034
+    local color_alert="\\x1b[1;37;41m"
+    # shellcheck disable=SC2034
+    local color_emergency="\\x1b[1;4;5;37;41m"
+
+    local colorvar="color_${log_level}"
+
+    local color="${!colorvar:-${color_error}}"
+    local color_reset="\\x1b[0m"
+
+    if [[ "${NO_COLOR:-}" = "true" ]] || { [[ "${TERM:-}" != "xterm"* ]] && [[ "${TERM:-}" != "screen"* ]]; } || [[ ! -t 2 ]]; then
+        if [[ "${NO_COLOR:-}" != "false" ]]; then
+        # Don't use colors on pipes or non-recognized terminals
+        color=""; color_reset=""
+        fi
+    fi
+
+    # all remaining arguments are to be printed
+    local log_line=""
+
+    while IFS=$'\n' read -r log_line; do
+        if [[ ${RUN_ENV["script.app.log.file"]+_} ]]
+        then
+            echo -e "${VAR_ENV["script.current.print.indent"]}$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${color}$(printf "[%9s]" "${log_level}")${color_reset} ${log_line}"
+            if [[ "${PARAM_ENV["script.verbose.mode"]}" == "ON" ]]
+            then
+                echo -e "${VAR_ENV["script.current.print.indent"]}$(date -u +"%Y-%m-%d %H:%M:%S UTC") $(printf "[%9s]" "${log_level}") ${log_line}" >> "${RUN_ENV["script.app.log.file"]}"
+            else
+                echo -e "${VAR_ENV["script.current.print.indent"]}$(date -u +"%Y-%m-%d %H:%M:%S UTC") $(printf "[%9s]" "${log_level}") ${log_line}" 1>&2
+            fi
+        else
+            echo -e "${VAR_ENV["script.current.print.indent"]}$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${color}$(printf "[%9s]" "${log_level}")${color_reset} ${log_line}"
+        fi
+    done <<< "${@:-}"
+    }
+
+    function emergency () {                                __log emergency "${@}"; exit 1; }
+    function alert ()     { [[ "${LOG_LEVEL:-0}" -ge 1 ]] && __log alert "${@}"; true; }
+    function critical ()  { [[ "${LOG_LEVEL:-0}" -ge 2 ]] && __log critical "${@}"; true; }
+    function error ()     { [[ "${LOG_LEVEL:-0}" -ge 3 ]] && __log error "${@}"; true; }
+    function warning ()   { [[ "${LOG_LEVEL:-0}" -ge 4 ]] && __log warning "${@}"; true; }
+    function notice ()    { [[ "${LOG_LEVEL:-0}" -ge 5 ]] && __log notice "${@}"; true; }
+    function info ()      { [[ "${LOG_LEVEL:-0}" -ge 6 ]] && __log info "${@}"; true; }
+    function debug ()     { [[ "${LOG_LEVEL:-0}" -ge 7 ]] && __log debug "${@}"; true; }
+# <<< Logging & Print Functions <<<
+
+
 # >>> Define Usage And Helptext >>>
 ##############################################################################
 __sample_usage="SAMPLE USAGE: ${0} [ -p PROCESS_NAME ] [ -a app_name ] [ -e current_run_env ] [ -c config_file_name ] [ -d ] [ -v ] [ -h ] ..."
@@ -101,7 +181,7 @@ __sample_usage="SAMPLE USAGE: ${0} [ -p PROCESS_NAME ] [ -a app_name ] [ -e curr
                                                Must Be In Lower Case.
 
   -c    PARAM_ENV["script.config.rootfile"]    <<Optional Parameter>>: Root Config File Name Which Will Be Used To
-                                               Pass Root Configrations For The Script Run. NOT RECOMMEDED FOR PROD RUNS.
+                                               Pass Root Configrations For The Script Run.
 
   -v    PARAM_ENV["script.verbose.mode"]       <<Optional Parameter>>: Enable Verbose Mode, Any Standard Error Will Be 
                                                Directed To Screen Instead Of Log File. NOT RECOMMEDED FOR PROD RUNS. 
@@ -148,21 +228,21 @@ EOF
             p)
                 PARAM_ENV["script.process.name"]="${OPTARG}"
 
-                echo "INFO: PARAM_ENV[script.process.name] Is Set To: '${PARAM_ENV["script.process.name"]}'"
+                info "PARAM_ENV[script.process.name] Is Set To: '${PARAM_ENV["script.process.name"]}'"
                 ;;
             a)
                 PARAM_ENV["script.process.appname"]="${OPTARG}"
 
                 [[ "${PARAM_ENV["script.process.appname"]}" != "${PARAM_ENV["script.process.appname"],,}" ]] && { help "ERROR: PARAM_ENV[script.process.appname] Value Must Be In Lower Case"; }
                 
-                echo "INFO: PARAM_ENV[script.process.appname] Is Set To: '${PARAM_ENV["script.process.appname"]}'"
+                info "PARAM_ENV[script.process.appname] Is Set To: '${PARAM_ENV["script.process.appname"]}'"
                 ;;
             e)
                 PARAM_ENV["script.runtime.envname"]="${OPTARG}"
 
                 [[ "${PARAM_ENV["script.runtime.envname"]}" != "${PARAM_ENV["script.runtime.envname"],,}" ]] && { help "ERROR: PARAM_ENV[script.runtime.envname] Value Must Be In Lower Case"; }
 
-                echo "INFO: PARAM_ENV[script.runtime.envname] Is Set To: '${PARAM_ENV["script.runtime.envname"]}'"
+                info "PARAM_ENV[script.runtime.envname] Is Set To: '${PARAM_ENV["script.runtime.envname"]}'"
                 ;;
             c)  
                 PARAM_ENV["script.config.rootfile"]="${OPTARG}"
@@ -171,20 +251,20 @@ EOF
 
                 [[ -f "${PARAM_ENV["script.config.rootfile"]}" ]] || { help "ERROR: PARAM_ENV[script.config.rootfile]:'${PARAM_ENV["script.config.rootfile"]}' Not Found"; }
                 
-                echo "INFO: PARAM_ENV[script.config.rootfile] Is Set To: '${PARAM_ENV["script.config.rootfile"]}'"
+                info "PARAM_ENV[script.config.rootfile] Is Set To: '${PARAM_ENV["script.config.rootfile"]}'"
                 ;;
             d)
                 PARAM_ENV["script.debug.mode"]="ON"
-                echo "INFO: PARAM_ENV[script.debug.mode] Is Set To: '${PARAM_ENV["script.debug.mode"]}'"
+                info "PARAM_ENV[script.debug.mode] Is Set To: '${PARAM_ENV["script.debug.mode"]}'"
                 ;;
             v)  
                 PARAM_ENV["script.verbose.mode"]="ON"
                 
-                echo "INFO: PARAM_ENV[script.verbose.mode] Is Set To: '${PARAM_ENV["script.verbose.mode"]}'"
+                info "PARAM_ENV[script.verbose.mode] Is Set To: '${PARAM_ENV["script.verbose.mode"]}'"
                 
-                echo "WARNING: SETTING PARAM_ENV[script.verbose.mode] TO: '${PARAM_ENV["script.verbose.mode"]}' IS NOT RECOMMENDED FOR PRODUCTION RUNS. TURN VERBOSE MODE TO OFF IF NOT DOING TEST RUNS"
+                warning "SETTING PARAM_ENV[script.verbose.mode] TO: '${PARAM_ENV["script.verbose.mode"]}' IS NOT RECOMMENDED FOR PRODUCTION RUNS. TURN VERBOSE MODE TO OFF IF NOT DOING TEST RUNS"
 
-                echo "WARNING: PROCESS WILL HALT FOR 15 SECONDS BEFORE EXECUTION IN VERBOSE MODE RUNS"
+                warning "PROCESS WILL HALT FOR 15 SECONDS BEFORE EXECUTION IN VERBOSE MODE RUNS"
                 sleep 15
                 ;;
             h)  
@@ -207,36 +287,130 @@ EOF
 
     [[ ${PARAM_ENV["script.runtime.envname"]+_} ]] || { help "ERROR: PARAM_ENV["script.runtime.envname"] Is Mandatory Parameter"; }
 
+    if [[ ${PARAM_ENV["script.config.rootfile"]+_} ]]
+    then
+        if [[ -f "${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.appname"]}.rootconfig.conf.sh" ]]
+        then
+            PARAM_ENV["script.config.rootfile"]="${RUN_ENV["script.dir.path"]%%/}/${PARAM_ENV["script.process.appname"]}.rootconfig.conf.sh"
+            alert "PARAM_ENV[script.config.rootfile] Is Set To (USING DEFAULT): '${PARAM_ENV["script.config.rootfile"]}'"
+        fi
+    fi
+
     PARAM_ENV["script.nonargs.paramlist"]="${@}"
-    echo "INFO: All Remaining Params Are Loaded To PARAM_ENV[script.nonargs.paramlist]: '${PARAM_ENV["script.nonargs.paramlist"]}'"
+    info "All Remaining Params Are Loaded To PARAM_ENV[script.nonargs.paramlist]: '${PARAM_ENV["script.nonargs.paramlist"]}'"
 # <<< Parse Parameters. <<<
 
 
-# >>> Functions For Setting, Merging & Resolving Configs & Dynamic Templates >>>
+# >>> Signal trapping and backtracing >>>
 ##############################################################################
+    function __cleanup_before_exit () {
+        if [[ ${RUN_ENV["script.app.tmp.dir"]+_} ]]
+        then
+            alert "Deleting the temp dir using the command: 'rm -fr ${RUN_ENV["script.app.tmp.dir"]}'"
+            rm -fr "${RUN_ENV["script.app.tmp.dir"]}"
+        fi
+        
+        info "Cleaning up. Done"
+    }
+    trap __cleanup_before_exit EXIT
+
+    # requires `set -o errtrace`
+    __err_report() {
+        local error_code=${?}
+        error "Error in ${RUN_ENV["script.file.path"]} in function ${1} on line ${2}"
+        exit ${error_code}
+    }
+    # Uncomment the following line for always providing an error backtrace
+    trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+
+    if [[ "${PARAM_ENV["script.debug.mode"]}" == "ON" ]]
+    then
+        echo "Starting process in PARAM_ENV["script.debug.mode"]: ${PARAM_ENV["script.debug.mode"]}"
+        set -o xtrace
+        PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+        LOG_LEVEL="7"
+        # Enable error backtracing
+        trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+    fi
+# <<< Signal trapping and backtracing <<<
+
+# >>> Functions For Pretty Printing, Setting, Merging & Resolving Configs & Dynamic Templates >>>
+##############################################################################
+    getFuncCallTrace() {
+        local container_name="FUNCNAME"
+        local function_trace=""
+        
+        for k in $(eval echo "\${!${container_name}[@]}")
+        do
+            [[ "${k}" == "0" ]] && continue
+            if [[ "${function_trace}" == "" ]]
+            then
+                function_trace="$(eval echo "\${${container_name}[${k}]}")"
+            else
+                function_trace="$(eval echo "\${${container_name}[${k}]}").${function_trace}"
+            fi
+        done
+        
+        echo "${function_trace}"
+    }
+    
+    addIndent() {
+        VAR_ENV["script.current.print.indent"]="    |${VAR_ENV["script.current.print.indent"]}"
+    }
+    
+    subtractIndent () {
+        VAR_ENV["script.current.print.indent"]="$( echo "${VAR_ENV["script.current.print.indent"]}" | sed 's/^    |//1' )"
+    }
+    
+    beginFuncInfo() {
+        addIndent
+        
+        info "\n# >>> Begin Function - ${1} >>>"
+        info "##############################################################################"
+        
+        addIndent
+    }
+    
+    endFuncInfo() {
+        subtractIndent
+
+        info "${VAR_ENV["script.current.print.indent"]}# <<< End Function - ${1}. <<<"
+        
+        subtractIndent  
+    }
+    
     add2ConfigEnv() {
+        local caller_script="$(caller | cut -d' ' -f2-)"
+        local function_trace="$(getFuncCallTrace)"
+        local function_signature="$( echo "'${caller_script}@${function_trace}: ${@}'" | sed "s/'\s*$/'/1" )"
+        beginFuncInfo "${function_signature}"
+
         local keyname="${1}"
         local value="${2}"
-        local caller_script="$(caller | cut -d' ' -f2-)"
 
         if [[ ${CONFIG_DEFAULTS_ENV[${keyname}]+_} ]]
         then
             if [[ ${CONFIG_ADD_ENV[${keyname}]+_} ]]
             then
-                CONFIG_ENV_LINEAGE[${keyname}]="${CONFIG_ENV_LINEAGE[${keyname}]} => '${caller_script}'@add2ConfigEnv '${keyname}' '${value}'"
+                CONFIG_ENV_LINEAGE[${keyname}]="${CONFIG_ENV_LINEAGE[${keyname}]} => ${function_signature}"
             else
-                CONFIG_ENV_LINEAGE[${keyname}]="'CONFIG_DEFAULTS_ENV[${keyname}]':'${CONFIG_DEFAULTS_ENV[${keyname}]}' => '${caller_script}'@add2ConfigEnv '${keyname}' '${value}'"
+                CONFIG_ENV_LINEAGE[${keyname}]="'CONFIG_DEFAULTS_ENV[${keyname}]:${CONFIG_DEFAULTS_ENV[${keyname}]}' => ${function_signature}"
             fi
 
             CONFIG_ADD_ENV[${keyname}]="${value}"
         else
-            echo "WARNING: SKIPPING CONFIG ADDITION TO ENV FOR CONFIG: '${keyname}' AS ONLY CONFIGS FOR WHICH DEFAULTS ARE SET CAN BE USED WITHIN THE PROCESS" 1>&2
+            warning "SKIPPING CONFIG ADDITION TO ENV FOR CONFIG: '${keyname}' AS ONLY CONFIGS FOR WHICH DEFAULTS ARE SET CAN BE USED WITHIN THE PROCESS"
         fi
+
+        endFuncInfo "${function_signature}"
     }
 
     refreshConfigEnv() {
         local caller_script="$(caller | cut -d' ' -f2-)"
-        echo "INFO: Config Refresh Initiated From: '${caller_script}'" 1>&2
+        local function_trace="$(getFuncCallTrace)"
+        local function_signature="$( echo "'${caller_script}@${function_trace}: ${@}'" | sed "s/'\s*$/'/1" )"
+        beginFuncInfo "${function_signature}"
+
         for k in "${!CONFIG_DEFAULTS_ENV[@]}"
         do
             if [[ ${CONFIG_ADD_ENV[${k}]+_} ]]
@@ -246,20 +420,26 @@ EOF
                 CONFIG_ENV[${k}]="${CONFIG_DEFAULTS_ENV[${k}]}"
             fi
         done
+        
+        endFuncInfo "${function_signature}"
     }
 
-   evalConfig() {
-        refreshConfigEnv
-        local keyname="${1}"
+   evalConfig() {       
         local caller_script="$(caller | cut -d' ' -f2-)"
+        local function_trace="$(getFuncCallTrace)"
+        local function_signature="$( echo "'${caller_script}@${function_trace}: ${@}'" | sed "s/'\s*$/'/1" )"
+        beginFuncInfo "${function_signature}"
 
+        local keyname="${1}"
+
+        refreshConfigEnv
         if [[ ${CONFIG_ENV[${keyname}]+_} ]]
         then
             if [[ ${CONFIG_EVAL_LINEAGE[${keyname}]+_} ]]
             then
-                CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #Begin Eval >>> 'CONFIG_ENV[${keyname}]':'${CONFIG_ENV[${keyname}]}' => '${caller_script}'@evalConfig '${keyname}'"
+                CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #Begin Eval >>> 'CONFIG_ENV[${keyname}]:${CONFIG_ENV[${keyname}]}' => ${function_signature}"
             else
-                CONFIG_EVAL_LINEAGE[${keyname}]="#Begin Eval >>> 'CONFIG_ENV[${keyname}]':'${CONFIG_ENV[${keyname}]}' => '${caller_script}'@evalConfig '${keyname}'"
+                CONFIG_EVAL_LINEAGE[${keyname}]="#Begin Eval >>> 'CONFIG_ENV[${keyname}]:${CONFIG_ENV[${keyname}]}' => ${function_signature}"
             fi
 
             local curr_value="${CONFIG_ENV[${keyname}]}"
@@ -277,28 +457,47 @@ EOF
                 fi
             done
 
-            CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #End Eval <<<"
+            CONFIG_EVAL_LINEAGE[${keyname}]="${CONFIG_EVAL_LINEAGE[${keyname}]} #End Eval <<<."
             CONFIG_EVAL_ENV[${keyname}]="${curr_value}"
         else
-            help "ERROR: Invalid Config Reference: CONFIG_ENV[${keyname}]"
+            emergency "Invalid Config Reference: CONFIG_ENV[${keyname}]"
         fi
+
+        endFuncInfo "${function_signature}"
     }
 
     # To Be Defined After Log File Definition
     showConfigs() {
-        for arg in "$@"
+        local caller_script="$(caller | cut -d' ' -f2-)"
+        local function_trace="$(getFuncCallTrace)"
+        local function_signature="$( echo "'${caller_script}@${function_trace}: ${@}'" | sed "s/'\s*$/'/1" )"
+        beginFuncInfo "${function_signature}"
+
+        local num_of_params="${#}"
+        local print_config_list=""
+
+        if [[ "${num_of_params}" == "0" ]]
+        then
+            print_config_list="${__env_dict_list}"
+        else
+            print_config_list="$@"
+        fi
+        for arg in ${print_config_list}
         do
             local container_name="${arg}"
-            echo -e "\n# Begin Show Configs: ${container_name} >>>"
+            info "\n# Begin Show Configs: ${container_name} >>>"
+            addIndent
             for k in $(eval echo "\${!${container_name}[@]}")
             do
-                echo -e "\t INFO: ${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
+                info "${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
             done
-            echo -e "# End Show Configs: ${container_name} <<<\n"
+            subtractIndent
+            info "# End Show Configs: ${container_name}. <<<\n"
         done
+
+        endFuncInfo "${function_signature}"
     }
-    # showConfigs PARAM_ENV RUN_ENV VAR_ENV CONFIG_ENV CONFIG_EVAL_ENV CONFIG_ENV_LINEAGE CONFIG_EVAL_LINEAGE
-# <<< Functions For Setting, Merging & Resolving Configs & Dynamic Templates. <<<
+# <<< Functions For Pretty Printing, Setting, Merging & Resolving Configs & Dynamic Templates. <<<
 
 
 # >>> Setup Default Config Env For The Process >>>
@@ -316,7 +515,7 @@ EOF
 ##############################################################################
     if [[ "${PARAM_ENV["script.config.rootfile"]+_}" ]]
     then
-        echo "INFO: Sourcing Param Env Root Config File: '${PARAM_ENV["script.config.rootfile"]}'"
+        info "Sourcing Param Env Root Config File: '${PARAM_ENV["script.config.rootfile"]}'"
         source "${PARAM_ENV["script.config.rootfile"]}"
 
         refreshConfigEnv
@@ -380,94 +579,10 @@ EOF
      
 # <<< Prepare runtime env using parameters <<<
 
-# Define the environment variables (and their defaults) that this script depends on
-LOG_LEVEL="${LOG_LEVEL:-6}" # 7 = debug -> 0 = emergency
-NO_COLOR="${NO_COLOR:-}"    # true = disable color. otherwise autodetected
 
 
-# >>> Logging & Print Functions >>>
-##############################################################################
-    function __log () {
-    local log_level="${1}"
-    shift
-
-    # shellcheck disable=SC2034
-    local color_debug="\\x1b[35m"
-    # shellcheck disable=SC2034
-    local color_info="\\x1b[32m"
-    # shellcheck disable=SC2034
-    local color_notice="\\x1b[34m"
-    # shellcheck disable=SC2034
-    local color_warning="\\x1b[33m"
-    # shellcheck disable=SC2034
-    local color_error="\\x1b[31m"
-    # shellcheck disable=SC2034
-    local color_critical="\\x1b[1;31m"
-    # shellcheck disable=SC2034
-    local color_alert="\\x1b[1;37;41m"
-    # shellcheck disable=SC2034
-    local color_emergency="\\x1b[1;4;5;37;41m"
-
-    local colorvar="color_${log_level}"
-
-    local color="${!colorvar:-${color_error}}"
-    local color_reset="\\x1b[0m"
-
-    if [[ "${NO_COLOR:-}" = "true" ]] || { [[ "${TERM:-}" != "xterm"* ]] && [[ "${TERM:-}" != "screen"* ]]; } || [[ ! -t 2 ]]; then
-        if [[ "${NO_COLOR:-}" != "false" ]]; then
-        # Don't use colors on pipes or non-recognized terminals
-        color=""; color_reset=""
-        fi
-    fi
-
-    # all remaining arguments are to be printed
-    local log_line=""
-
-    while IFS=$'\n' read -r log_line; do
-        echo -e "$(date -u +"%Y-%m-%d %H:%M:%S UTC") $(printf "[%9s]" "${log_level}") ${log_line}" >> "${RUN_ENV["script.app.log.file"]}"
-        echo -e "$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${color}$(printf "[%9s]" "${log_level}")${color_reset} ${log_line}" 1>&2
-    done <<< "${@:-}"
-    }
-
-    function emergency () {                                __log emergency "${@}"; exit 1; }
-    function alert ()     { [[ "${LOG_LEVEL:-0}" -ge 1 ]] && __log alert "${@}"; true; }
-    function critical ()  { [[ "${LOG_LEVEL:-0}" -ge 2 ]] && __log critical "${@}"; true; }
-    function error ()     { [[ "${LOG_LEVEL:-0}" -ge 3 ]] && __log error "${@}"; true; }
-    function warning ()   { [[ "${LOG_LEVEL:-0}" -ge 4 ]] && __log warning "${@}"; true; }
-    function notice ()    { [[ "${LOG_LEVEL:-0}" -ge 5 ]] && __log notice "${@}"; true; }
-    function info ()      { [[ "${LOG_LEVEL:-0}" -ge 6 ]] && __log info "${@}"; true; }
-    function debug ()     { [[ "${LOG_LEVEL:-0}" -ge 7 ]] && __log debug "${@}"; true; }
-# <<< Logging & Print Functions <<<
 
 
-# >>> Signal trapping and backtracing >>>
-##############################################################################
-    function __cleanup_before_exit () {
-        alert "Deleting the temp dir using the command: 'rm -fr ${RUN_ENV["script.app.tmp.dir"]}'"
-        rm -fr "${RUN_ENV["script.app.tmp.dir"]}"
-        info "Cleaning up. Done"
-    }
-    trap __cleanup_before_exit EXIT
-
-    # requires `set -o errtrace`
-    __err_report() {
-        local error_code=${?}
-        error "Error in ${RUN_ENV["script.file.path"]} in function ${1} on line ${2}"
-        exit ${error_code}
-    }
-    # Uncomment the following line for always providing an error backtrace
-    trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
-
-    if [[ "${PARAM_ENV["script.debug.mode"]}" == "ON" ]]
-    then
-        echo "Starting process in PARAM_ENV["script.debug.mode"]: ${PARAM_ENV["script.debug.mode"]}"
-        set -o xtrace
-        PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
-        LOG_LEVEL="7"
-        # Enable error backtracing
-        trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
-    fi
-# <<< Signal trapping and backtracing <<<
 
 
 # >>> Print env info and source configs >>>
