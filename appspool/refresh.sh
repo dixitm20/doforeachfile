@@ -321,7 +321,9 @@ showConfigs() {
             addIndent
             for k in $(eval echo "\${!${container_name}[@]}")
             do
-                echo "${__indent}${container_name}[${k}]='$(eval echo "\${${container_name}[${k}]}")'"
+                local key="${container_name}[${k}]"
+                local value=$(eval echo "\"\${${container_name}[${k}]}\"")
+                echo "${__indent}${key}='${value}'"
             done
             subtractIndent
             echo -e "${__indent}# <<< End Show Configs: ${container_name}. <<<\n"
