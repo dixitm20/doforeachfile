@@ -1,1 +1,749 @@
-echo $2
+#!/usr/bin/env bash
+
+# Exit on error. Append "|| true" if you expect an error.
+set -o errexit
+# Exit On Error Inside Any Functions Or Subshells.
+set -o errtrace
+# Do Not Allow Use Of Undefined Vars. Use ${VAR:-} To Use An Undefined VAR
+set -o nounset
+# Catch The Error In Case Mysqldump Fails (But Gzip Succeeds) In `mysqldump |gzip`
+set -o pipefail
+# Turn On Traces, Useful While Debugging But Commented Out By Default
+# set -o xtrace
+
+
+# Set magic variables for current file, directory, os, etc.
+__dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+__file="${__dir}/$(basename "${BASH_SOURCE[0]}")"
+__base="$(basename "${__file}" .sh)"
+__invocation="$(printf %q "${__file}")$( (($#)) && printf ' %q' "$@" || true)"
+__paramlist="${@}"
+__indent=""
+__procid="$$"
+__proc_run_dateid="$(date "+%Y_%m_%d-%H_%M_%S_%N")"
+
+# Print Info
+echo "Script Dir: '${__dir}'"
+echo "Script Complete Path: '${__file}'"
+echo "Script File Base Name: '${__base}'"
+echo "Script Invocation: '${__invocation}'"
+echo "Script Param List: '${__paramlist}'"
+echo "Script Process Id: '${__procid}'"
+echo "Script Process Run Date Id: '${__proc_run_dateid}'"
+
+
+
+# >>> Pretty Print Fucntions >>>
+##############################################################################
+log() {
+    echo -e "${__indent}$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${@}"
+}
+
+addIndent() {
+    __indent="    ${__indent}"
+}
+
+subtractIndent () {
+    __indent="$( echo "${__indent}" | sed 's/^    //1' )"
+}
+# <<< Pretty Print Fucntions. <<<
+
+
+# >>> Pretty Print Fucntions >>>
+##############################################################################
+log() {
+    echo -e "${__indent}|$(date -u +"%Y-%m-%d %H:%M:%S UTC") ${@}"
+}
+
+addIndent() {
+    __indent="    ${__indent}"
+}
+
+newline() {
+    local num_of_args=${#}
+    if [[ ${num_of_args} -gt 0 ]]
+    then
+        local num_of_newlines=${1}
+        local counter=0
+        for _ in $(seq ${num_of_newlines})
+        do
+            echo -e "\n"
+        done
+    else
+        echo -e "\n"
+    fi
+}
+
+subtractIndent () {
+    __indent="$( echo "${__indent}" | sed 's/^    //1' )"
+}
+# <<< Pretty Print Fucntions. <<<
+
+
+# >>> Define Usage And Helptext >>>
+##############################################################################
+__sample_usage="SAMPLE USAGE: ${0} [ -e runtime_env ] [ -f flag_overwrite_hdfs_dir ]..."
+
+[[ "${__usage+_}" ]] || read -r -d '' __usage <<-'EOF'|| true # exits non-zero when EOF encountered
+  -e    runtime_env                    <<Optional Parameter, Default Val: PRD>>: Current Run Env Name.
+                                       Allowed values are dev/DEV/prd/PRD
+
+  -f    flag_overwrite_hdfs_dir        <<Optional Parameter, Default Val: FALSE>>: Flag To Enable overwrite
+                                       of target hdfs locations. MUST BE USED IN DEBUG MODE ONLY. NOT FOR
+                                       PROD USAGE.
+
+  -h    --help              This Page
+EOF
+
+    # shellcheck disable=SC2015
+    [[ "${__helptext+_}" ]] || read -r -d '' __helptext <<-'EOF' || true # exits non-zero when EOF encountered
+    Script For Moving bmcdiscovery Data Files From Landing Zone To HDFS External Layer Table Root Dirs.
+EOF
+
+
+    function help () {
+        echo "" 1>&2
+        echo " ${*}" 1>&2
+        echo "" 1>&2
+        echo " ${__sample_usage}"
+        echo "" 1>&2
+        echo "  ${__usage:-No usage available}" 1>&2
+        echo "" 1>&2
+
+        if [[ "${__helptext:-}" ]]; then
+            echo " ${__helptext}" 1>&2
+            echo "" 1>&2
+        fi
+        exit 1
+    }
+# <<< Define Usage And Helptext. <<<
+
+
+# >>> Parse Opt Args >>>
+##############################################################################
+# unset variables
+unset -v runtime_env
+unset -v flag_overwrite_hdfs_dir
+
+# Set Defaults
+runtime_env="##na##"
+flag_overwrite_hdfs_dir="FALSE"
+
+# Read Options
+while getopts ":e:fh" o; do
+    case "${o}" in
+        e)
+            # Convert Env To Lower Case
+            runtime_env="${OPTARG,,}"
+            ;;
+        f)  
+            echo "WARNING: Switch To Enable HDFS Partition Overwrite Is Enabled. This Can Cause Data loss & MUST NOT BE USED IN PROD JOBS!"
+            echo "WARNING: PROCESS WILL HALT FOR 10 secs BEFORE CONTINUING WITH THE RUN!!"
+            flag_overwrite_hdfs_dir="TRUE"
+            sleep 10
+            ;;
+        h)  
+            help "Help Using: '${0}'"
+            ;;
+        :)  
+            echo "ERROR: Option '-${OPTARG}' Requires An Argument"
+            exit 1
+            ;;
+        \?)
+            help "ERROR: Invalid Option '-${OPTARG}'"
+            exit 1
+            ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+# If no value is passed for runtime env as argument then calculate the value based on hostname
+if [[ "${runtime_env}" == "##na##" ]]
+then
+    # Set default to prd. After this if the hostname contains word drona then set env to dev
+    runtime_env="prd"
+    __host="$(hostname)"
+    
+    # If hostname contains word drona then set env to dev
+    [[ "${__host}" == *"drona"* ]] && runtime_env="dev"
+fi
+
+echo "INFO: runtime_env Is Set To: '${runtime_env}'"
+# <<< Parse Opt Args. <<<
+
+
+# >>> Parse Nonopt Args, Set Defaults For Variables >>>
+##############################################################################
+__num_of_args=${#}
+echo "INFO: Number Of Arguments Is Set To: '${__num_of_args}'"
+
+# if [[ ${__num_of_args} -lt 1 ]]
+# then
+#     help "ERROR: Missing Required Arguments."
+# fi
+
+__user="$(whoami)"
+echo "INFO: User Is Set To: '${__user}'"
+__host="$(hostname)"
+echo "INFO: Hostname Is Set To: '${__host}'"
+
+
+PROJECT_ROOT_DIR="/efs/home/${__user}/gitProjects/bmcdiscovery"
+USER_HOME_DIR="/efs/home/${__user}"
+KINIT_USER="${__user}"
+
+
+LANDING_ZONE_DIR="${PROJECT_ROOT_DIR}/landingzone/indir"
+IN_PROC_DIR="${PROJECT_ROOT_DIR}/landingzone/inproc"
+ARCHIVE_DIR="${PROJECT_ROOT_DIR}/landingzone/archive"
+PYTHON_SCRIPT_DIR="${PROJECT_ROOT_DIR}/scripts/python"
+UNZIP_ROOT_TEMP_DIR="${IN_PROC_DIR}/${__base}-unzip-dir-for-proc-runid-${__procid}"
+mkdir -p "${UNZIP_ROOT_TEMP_DIR}"
+
+
+fn_do_kinit() {
+    echo "INFO: BEGIN FUNCTION: 'fn_do_kinit'"
+    addIndent
+    local num_of_args=${#}
+
+    echo -e "\n\nList Of Kerberos Authorization Tickets(PRE-INIT) Using Command: 'klist -A'"
+    klist -A || echo 'No credentials cache found!'
+
+    export KRB5CCNAME="/tmp/krb5cc_${UID}_PID-${__procid}_DATEID-${__proc_run_dateid}"
+    echo -e "\n\nSetting Credential Cache Location: KRB5CCNAME='${KRB5CCNAME}'"
+
+    echo -e "\nInitializing Kerberos Authorization Tickets For The Session using the below command:"
+    echo -e "\t\t'kinit \"${KINIT_USER}@NA.CORP.CARGILL.COM\" -k -t \"${USER_HOME_DIR}/${KINIT_USER}.keytab\"'"
+    kinit "${KINIT_USER}@NA.CORP.CARGILL.COM" -k -t "${USER_HOME_DIR}/${KINIT_USER}.keytab"
+
+    echo -e "\n\nList Of Kerberos Authorization Tickets(POST-INIT) Using Command: 'klist -A'"
+    klist -A
+
+    subtractIndent
+}
+
+fn_do_kinit
+# <<< Parse Nonopt Args, Set Defaults For Variables. <<<
+
+
+# >>> Signal Trapping And Backtracing >>>
+##############################################################################
+    function __cleanup_before_exit () {
+        local final_return_status="${?}"
+
+        subtractIndent
+        
+        echo -e "\n\n  NOTICE: BEGIN FUNCTION: '__cleanup_before_exit'"
+        if [[ -d "${UNZIP_ROOT_TEMP_DIR}" ]]
+        then
+            echo -e "    Deleting The Temp Unzip Dir Using The Command: rm -fr '${UNZIP_ROOT_TEMP_DIR}'"
+            rm -fr "${UNZIP_ROOT_TEMP_DIR}"
+        fi
+
+        # Destroy kinit token
+        echo -e "    Destroying The User’s Active Kerberos Authorization Tickets Using Command: 'kdestroy -A -q'"
+        kdestroy -A -q
+
+        echo -e "  NOTICE: END FUNCTION: '__cleanup_before_exit'\n"
+        if [[ "${final_return_status}" == "0" ]]
+        then
+            echo -e "\n#  <<< END SCRIPT <<SUCCESS>>: '${__invocation}'. <<<"
+        else
+            echo -e "\n#  <<< END SCRIPT <<FAILURE>>: '${__invocation}'. <<<"
+        fi
+    }
+
+    trap __cleanup_before_exit EXIT
+
+    # requires `set -o errtrace`
+    __err_report() {
+        local error_code=${?}
+        echo "Error in ${__file} in function '${1}' on line ${2}"
+        exit ${error_code}
+    }
+    # Uncomment the following line for always providing an error backtrace
+    trap '__err_report "${FUNCNAME:-.}" ${LINENO}' ERR
+# <<< Signal Trapping And Backtracing. <<<
+
+
+echo -e "\n#  >>> BEGIN SCRIPT: '${__invocation}' >>>\n"
+addIndent
+
+
+# >>> Env Specific Logic >>>
+##############################################################################
+	log "INFO: LOADING CONFIGRATIONS FOR ENV: '${runtime_env}':"
+    addIndent
+    newline
+
+	log "INFO: LANDING_ZONE_DIR: '${LANDING_ZONE_DIR}'"
+    log "INFO: IN_PROC_DIR: '${IN_PROC_DIR}'"
+    log "INFO: ARCHIVE_DIR: '${ARCHIVE_DIR}'"
+    log "INFO: UNZIP_ROOT_TEMP_DIR: '${UNZIP_ROOT_TEMP_DIR}'"
+
+
+    case ${runtime_env} in
+        "prd")
+            log "INFO: Peanut/Prd Specific Configrations Are Being Loaded."
+            IMPALA_HOSTNAME='peanut-impala.cargill.com'
+        ;;
+        "dev")
+            log "INFO: Drona/Dev Specific Configrations Are Being Loaded."
+            IMPALA_HOSTNAME='drona-impala.cargill.com'
+        ;;
+        *)
+            help "ERROR: Env: '${runtime_env}' Is Not A Valid Env."
+            exit 1
+        ;;
+    esac
+
+    __env_dict_list="TABLE_NAME_TO_ZIP_PATTERN_MAP TABLE_NAME_TO_FILE_PATTERN_MAP TABLE_NAME_TO_SCHEMA_MAP TABLE_NAME_TO_HDFS_LOCATION_MAP"
+
+    for dict in ${__env_dict_list}
+    do
+        unset ${dict}
+    done
+
+    declare -A TABLE_NAME_TO_ZIP_PATTERN_MAP=(
+        ["bmcdiscovery_cargill_total_subnets_ext"]='.*'
+        ["bmcdiscovery_hosts_ext"]='.*'
+        ["bmcdiscovery_network_devices_ext"]='.*'
+        ["bmcdiscovery_printers_ext"]='.*'
+        ["bmcdiscovery_snmp_managed_devices_ext"]='.*'
+        ["bmcdiscovery_storage_devices_ext"]='.*'
+    )
+
+    declare -A TABLE_NAME_TO_FILE_PATTERN_MAP=( 
+        ["bmcdiscovery_cargill_total_subnets_ext"]='.*/Cargill_Total_Subnets.csv'
+        ["bmcdiscovery_hosts_ext"]='.*/Hosts.csv'
+        ["bmcdiscovery_network_devices_ext"]='.*/Network_Devices.csv'
+        ["bmcdiscovery_printers_ext"]='.*/Printers.csv'
+        ["bmcdiscovery_snmp_managed_devices_ext"]='.*/SNMP_Managed_Devices.csv'
+        ["bmcdiscovery_storage_devices_ext"]='.*/Storage_Devices.csv'
+    )
+
+    declare -A TABLE_NAME_TO_SCHEMA_MAP=( 
+        ["bmcdiscovery_cargill_total_subnets_ext"]="${runtime_env}_external_global_it_data_lake"
+        ["bmcdiscovery_hosts_ext"]="${runtime_env}_external_global_it_data_lake"
+        ["bmcdiscovery_network_devices_ext"]="${runtime_env}_external_global_it_data_lake"
+        ["bmcdiscovery_printers_ext"]="${runtime_env}_external_global_it_data_lake"
+        ["bmcdiscovery_snmp_managed_devices_ext"]="${runtime_env}_external_global_it_data_lake"
+        ["bmcdiscovery_storage_devices_ext"]="${runtime_env}_external_global_it_data_lake"
+    )
+
+    declare -A TABLE_NAME_TO_HDFS_LOCATION_MAP=(
+        ["bmcdiscovery_cargill_total_subnets_ext"]="/${runtime_env}/external/global_it_data_lake/inputs/device_discovery/bmcdiscovery_cargill_total_subnets_ext"
+        ["bmcdiscovery_hosts_ext"]="/${runtime_env}/external/global_it_data_lake/inputs/device_discovery/bmcdiscovery_hosts_ext"
+        ["bmcdiscovery_network_devices_ext"]="/${runtime_env}/external/global_it_data_lake/inputs/device_discovery/bmcdiscovery_network_devices_ext"
+        ["bmcdiscovery_printers_ext"]="/${runtime_env}/external/global_it_data_lake/inputs/device_discovery/bmcdiscovery_printers_ext"
+        ["bmcdiscovery_snmp_managed_devices_ext"]="/${runtime_env}/external/global_it_data_lake/inputs/device_discovery/bmcdiscovery_snmp_managed_devices_ext"
+        ["bmcdiscovery_storage_devices_ext"]="/${runtime_env}/external/global_it_data_lake/inputs/device_discovery/bmcdiscovery_storage_devices_ext"
+    )
+
+    subtractIndent
+# <<< Env Specific Logic <<<
+
+
+# >>> Functions >>>
+##############################################################################
+showConfigs() {
+        local num_of_params="${#}"
+        local print_config_list=""
+
+        if [[ "${num_of_params}" == "0" ]]
+        then
+            print_config_list="${__env_dict_list}"
+        else
+            print_config_list="$@"
+        fi
+
+        for arg in ${print_config_list}
+        do
+            local container_name="${arg}"
+            echo -e "\n${__indent}# >>> Begin Show Configs: ${container_name} >>>"
+            addIndent
+            for k in $(eval echo "\${!${container_name}[@]}")
+            do
+                local key="${container_name}[${k}]"
+                local value=$(eval echo "\"\${${container_name}[${k}]}\"")
+                echo "${__indent}${key}='${value}'"
+            done
+            subtractIndent
+            echo -e "${__indent}# <<< End Show Configs: ${container_name}. <<<\n"
+        done
+}
+
+# Function returns the path of the most recent zip file that it processed
+fn_unzip_local_most_recent_zipfile() {
+    log "INFO: BEGIN FUNCTION: 'fn_unzip_local_most_recent_zipfile'"
+    addIndent
+    local num_of_args=${#}
+    
+    local  __resultvar=$1
+    local processed_zip_file_path="##NA##"
+    
+    local source_landing_zone_dir="${2}"
+    log "INFO: PARAMETER: source_landing_zone_dir='${source_landing_zone_dir}'"
+    
+    local target_unzip_dir="${3}"
+    log "INFO: PARAMETER: target_unzip_dir='${target_unzip_dir}'"
+
+    local zip_file_grep_pattern=".*"
+    if [[ ${num_of_args} -gt 3 ]]
+    then
+        zip_file_grep_pattern="${4}"
+        log "INFO: PARAMETER: zip_file_grep_pattern='${zip_file_grep_pattern}'"
+    else
+        log "INFO: Using The Default Zip File Grep Pattern: '${zip_file_grep_pattern}'"
+    fi
+
+    local flag_is_any_files_found="$( find "${source_landing_zone_dir}" -type f -regex "${zip_file_grep_pattern}" )"
+
+    local num_of_zip_files_for_proc=0
+    [[ -z "${flag_is_any_files_found}" ]] || num_of_zip_files_for_proc=$( ls -lrt "${source_landing_zone_dir}" | grep -v '^d' | grep '.*\.zip$' | grep "${zip_file_grep_pattern}" | wc -l )
+
+    if [[ ${num_of_zip_files_for_proc} -lt 1 ]]
+    then
+        log "WARNING: No Zip File With Pattern: '${zip_file_grep_pattern}' Found In Dir: '${source_landing_zone_dir}' !!"
+    else
+        log "INFO: ${num_of_zip_files_for_proc} Zip Files With Pattern: '${zip_file_grep_pattern}' Found In Dir: '${source_landing_zone_dir}' Are As Below:"
+        ls -lrt "${source_landing_zone_dir}" | grep -v '^d' | grep '.*\.zip$' | grep "${zip_file_grep_pattern}"
+
+        [[ ${num_of_zip_files_for_proc} -gt 1 ]] && log "NOTICE: Only Most Recent File Will Be Processed."
+
+        local most_recent_zip_filename="$( ls -lrt ${source_landing_zone_dir} | grep -v '^d' | grep '.*\.zip$' | grep "${zip_file_grep_pattern}" | tail -1 | tr -s ' ' | cut -d' ' -f9 )"
+        
+        log "INFO: FUNCTION VARIABLE: most_recent_zip_filename='${most_recent_zip_filename}'"
+        local most_recent_zip_filepath="${source_landing_zone_dir}/${most_recent_zip_filename}"
+        log "INFO: Most Recent Zip File With Pattern: '${zip_file_grep_pattern}' That Will Be Processed In This Run: '${most_recent_zip_filepath}'"
+        processed_zip_file_path="${most_recent_zip_filepath}"
+
+        log "INFO: Unzip Files Using The Command: 'unzip \"${most_recent_zip_filepath}\" -d \"${target_unzip_dir}/\"'"
+        unzip "${most_recent_zip_filepath}" -d "${target_unzip_dir}/"
+
+    fi
+
+    log "INFO: RETURN VALUE: processed_zip_file_path='${processed_zip_file_path}'"
+    if [[ "${__resultvar}" ]]; then
+        eval ${__resultvar}="'${processed_zip_file_path}'"
+    else
+        echo "${processed_zip_file_path}"
+    fi
+    subtractIndent
+}
+
+
+
+fn_move_from_local_to_hdfs() {
+    log "INFO: BEGIN FUNCTION: 'fn_move_from_local_to_hdfs'"
+    addIndent
+    local num_of_args=${#}
+    
+    local  __resultvar=$1
+    local num_of_files_moved_to_hdfs=0
+    
+    local src_unzip_dir="${2}"
+    log "INFO: PARAMETER: src_unzip_dir='${src_unzip_dir}'"
+    
+    local tgt_hdfs_dir="${3}"
+    log "INFO: PARAMETER: tgt_hdfs_dir='${tgt_hdfs_dir}'"
+
+    local files_grep_pattern=".*"
+    if [[ ${num_of_args} -gt 3 ]]
+    then
+        files_grep_pattern="${4}"
+        log "INFO: PARAMETER: files_grep_pattern='${files_grep_pattern}'"
+    else
+        log "INFO: Using The Default File Grep Pattern: '${files_grep_pattern}'"
+    fi
+
+    local flag_is_any_files_found="$( find "${src_unzip_dir}" -type f -regex "${files_grep_pattern}" )"
+
+    local num_of_files_for_proc=0
+    [[ -z "${flag_is_any_files_found}" ]] || num_of_files_for_proc=$( find "${src_unzip_dir}" -type f -regex "${files_grep_pattern}" | wc -l )
+
+    if [[ ${num_of_files_for_proc} -lt 1 ]]
+    then
+        log "WARNING: No Files With Pattern: '${files_grep_pattern}' Found In Dir: '${src_unzip_dir}' !!"
+    else
+        log "INFO: ${num_of_files_for_proc} Files With Pattern: '${files_grep_pattern}' Found In Dir: '${src_unzip_dir}' Are As Below:"
+        find "${src_unzip_dir}" -type f -regex "${files_grep_pattern}" | xargs -I {} basename {} 
+        num_of_files_moved_to_hdfs=${num_of_files_for_proc}
+
+        log "INFO: Moving All The Above Files To The Target HDFS Path: '${tgt_hdfs_dir}'"
+        local total_line_count=0
+        local COUNTER=1
+        for file in $( find "${src_unzip_dir}" -type f -regex "${files_grep_pattern}" )
+        do
+            # Fix delimiter & Quotes Before Moving The File To HDFS
+            sed -i -e "s/\"\s*\[\s*/\"/g" -e "s/\s*\]\s*\"/\"/g" -e "s/\s*\[\s*/\"/g" -e "s/\s*\]\s*/\"/g" "${file}"
+            iconv -t utf-8 -c "${file}" -o "${file}.tmp"
+            mv -f "${file}.tmp" "${file}"
+            /usr/share/cdp/python-3.6/bin/python3.6 "${PYTHON_SCRIPT_DIR}/bmcdiscovery_csv_parser.py" "${file}"
+            local file_line_count=$( cat "${file}" | wc -l )
+            log "INFO: Copying File#: ${COUNTER} Having Name: '$( basename "${file}" )'  With Line Count: '${file_line_count}' To HDFS."
+            total_line_count=$(( ${total_line_count} + ${file_line_count} ))
+            hadoop fs -copyFromLocal "${file}" "${tgt_hdfs_dir}"
+            ((COUNTER++))
+        done
+        log "INFO: Total Record Count Of: '${total_line_count}' Loaded Into HDFS From '${num_of_files_moved_to_hdfs}' files(Including Possible Headers In Each File) "
+    fi
+
+    log "INFO: RETURN VALUE: num_of_files_moved_to_hdfs='${num_of_files_moved_to_hdfs}'"
+    if [[ "${__resultvar}" ]]; then
+        eval ${__resultvar}="'${num_of_files_moved_to_hdfs}'"
+    else
+        echo "${num_of_files_moved_to_hdfs}"
+    fi
+    subtractIndent
+}
+
+fn_verify_tgt_hdfs_dir_isempty() {
+    log "INFO: BEGIN FUNCTION: 'fn_verify_tgt_hdfs_dir_isempty'"
+    addIndent
+    local num_of_args=${#}
+    
+    local  __resultvar=$1
+    # is_tgt_hdfs_dir_nonempty = 0 : Dir Non Empty
+    # is_tgt_hdfs_dir_nonempty = 1 : Dir Exists But Is Empty
+    # is_tgt_hdfs_dir_nonempty = 2 : Dir Does Not Exists
+    local is_tgt_hdfs_dir_nonempty=2
+    
+    local tgt_hdfs_dir="${2}"
+    log "INFO: PARAMETER: tgt_hdfs_dir='${tgt_hdfs_dir}'"
+    
+    local is_tgt_hdfs_exists="FALSE"
+    hadoop fs -test -d "${tgt_hdfs_dir}" && is_tgt_hdfs_exists="TRUE"
+    
+    if [[ "${is_tgt_hdfs_exists}" == "TRUE" ]]
+    then               
+        local is_tgt_hdfs_empty=$( hadoop fs -count ${tgt_hdfs_dir} | awk '{print $2}' )
+        if [[ ${is_tgt_hdfs_empty} -eq 0 ]]
+        then
+            log "INFO: Target HDFS Data Directory: '${tgt_hdfs_dir}' Exists But It Is Empty."
+            is_tgt_hdfs_dir_nonempty=1
+        else
+            log "WARNING: Target HDFS Data Directory: '${tgt_hdfs_dir}' Exists && Is Not Empty!!"
+            is_tgt_hdfs_dir_nonempty=0
+        fi
+    else
+        log "INFO: Target HDFS Data Directory: '${tgt_hdfs_dir}' Does Not Exists."
+    fi
+
+    log "INFO: RETURN VALUE: is_tgt_hdfs_dir_nonempty='${is_tgt_hdfs_dir_nonempty}'"
+    if [[ "${__resultvar}" ]]; then
+        eval ${__resultvar}="'${is_tgt_hdfs_dir_nonempty}'"
+    else
+        echo "${is_tgt_hdfs_dir_nonempty}"
+    fi
+    subtractIndent
+}
+
+
+
+fn_gen_load_seq_nbr_YYYYMMDD() {
+    log "INFO: BEGIN FUNCTION: 'fn_gen_load_seq_nbr_YYYYMMDD'"
+    addIndent
+    local num_of_args=${#}
+    
+    local  __resultvar=$1
+    local load_seq_nbr=""
+    
+    local inproc_file_name="${2}"
+    log "INFO: PARAMETER: inproc_file_name='${inproc_file_name}'"
+    
+    load_seq_nbr="$( echo "${inproc_file_name}" | sed 's/.*\([0-9][0-9][0-9][0-9][0-1][0-9][0-3][0-9]\).*/\1/g' )"
+
+    # If Zip File Does Not Have The Date Component Then Generate Using The Current Date. 
+    if [[ -z "${load_seq_nbr}" || "${load_seq_nbr}" == "${inproc_file_name}" ]]
+    then
+        load_seq_nbr="$( date -u +"%Y%m%d" )"
+        log "WARNING: load_seq_nbr Cannot Be Extracted From inproc_file_name: ${inproc_file_name}"
+        log "WARNING: Calculated load_seq_nbr: '${load_seq_nbr}' Based On Current Run Date."
+    else   
+        log "INFO: Extracted load_seq_nbr: '${load_seq_nbr}' From inproc_file_name: '${inproc_file_name}'"
+    fi
+    
+    log "INFO: RETURN VALUE: load_seq_nbr=${load_seq_nbr}"
+    if [[ "${__resultvar}" ]]; then
+        eval ${__resultvar}="'${load_seq_nbr}'"
+    else
+        echo "${load_seq_nbr}"
+    fi
+    subtractIndent
+}
+# <<< Functions. <<<
+
+
+# >>> Main >>>
+##############################################################################
+newline 2
+log "INFO: BEGIN MAIN:"
+addIndent
+showConfigs
+subtractIndent
+
+echo "${TABLE_NAME_TO_ZIP_PATTERN_MAP[@]}" | tr ' ' '\n' | sort -u | while read zip_file_pattern
+do 
+    addIndent
+    newline
+    log "INFO: ==> Unzip Most Recent Zip File Of Pattern: '${zip_file_pattern}' Using function: 'fn_unzip_local_most_recent_zipfile'"
+    addIndent   
+    zip_file_pattern_no_regex="$( echo "${zip_file_pattern}" | sed 's/[^a-z0-9_]//g' )"
+    curr_unzip_dir="${UNZIP_ROOT_TEMP_DIR}/TEMP-${RANDOM}_${zip_file_pattern_no_regex}-$(date "+%Y_%m_%d-%H_%M_%S_%N")"
+    mkdir -p ${curr_unzip_dir}
+
+    PROCESSED_ZIP_FILE_PATH=""
+    fn_unzip_local_most_recent_zipfile PROCESSED_ZIP_FILE_PATH "${LANDING_ZONE_DIR}" "${curr_unzip_dir}" "${zip_file_pattern}"
+    newline
+    log "INFO: PROCESSED_ZIP_FILE_PATH='${PROCESSED_ZIP_FILE_PATH}'"
+    if [[ "${PROCESSED_ZIP_FILE_PATH}" == "##NA##" ]]
+    then
+        log "WARNING: No Zip Files Found For Processing. Skip Run Of Remaining Steps For Zip File Pattern: '${zip_file_pattern}'."
+        subtractIndent
+        subtractIndent
+        continue
+    fi
+
+    PROCESSED_ZIP_FILE_NAME="$( basename ${PROCESSED_ZIP_FILE_PATH} )"
+    log "INFO: PROCESSED_ZIP_FILE_NAME='${PROCESSED_ZIP_FILE_NAME}'"
+
+    newline
+    log "INFO: ==> Generate LOAD_SEQ_NBR For Processing Zip File: '${PROCESSED_ZIP_FILE_NAME}' Using function: 'fn_gen_load_seq_nbr_YYYYMMDD'"
+    LOAD_SEQ_NBR=""
+    fn_gen_load_seq_nbr_YYYYMMDD LOAD_SEQ_NBR "${PROCESSED_ZIP_FILE_NAME}"
+    newline
+    log "INFO: LOAD_SEQ_NBR='${LOAD_SEQ_NBR}'"
+    
+    newline
+    CURRENT_ARCHIVE_DIR="${ARCHIVE_DIR}/${LOAD_SEQ_NBR}"
+    mkdir -p "${CURRENT_ARCHIVE_DIR}"
+    log "INFO: ARCHIVE DIR FOR ZIP FILE: '${PROCESSED_ZIP_FILE_NAME}' IS SET TO: '${CURRENT_ARCHIVE_DIR}'"
+    
+    newline
+    log "INFO: ==> Following Tables Will Be Loaded Using The PROCESSED_ZIP_FILE_PATH='${PROCESSED_ZIP_FILE_PATH}'"
+    addIndent
+    COUNTER=1
+    for table_name in "${!TABLE_NAME_TO_ZIP_PATTERN_MAP[@]}"
+    do   
+        curr_zip_pattern="${TABLE_NAME_TO_ZIP_PATTERN_MAP["${table_name}"]}"
+        if [[ "${curr_zip_pattern}" == "${zip_file_pattern}" ]]
+        then
+            log "INFO: TABLE#: ${COUNTER}  =>  TABLE NAME: '${TABLE_NAME_TO_SCHEMA_MAP[${table_name}]}.${table_name}'"
+            (( COUNTER++ ))
+        fi
+    done
+    
+    COUNTER=1
+    for table_name in "${!TABLE_NAME_TO_ZIP_PATTERN_MAP[@]}"
+    do   
+        curr_zip_pattern="${TABLE_NAME_TO_ZIP_PATTERN_MAP["${table_name}"]}"
+        if [[ "${curr_zip_pattern}" == "${zip_file_pattern}" ]]
+        then
+            newline
+            curr_load_complete_tbl_nm="${TABLE_NAME_TO_SCHEMA_MAP[${table_name}]}.${table_name}"
+            log "INFO: TABLE#: ${COUNTER}  =>  : BEGIN LOADING: '${curr_load_complete_tbl_nm}' USING FILES FROM PROCESSED_ZIP_FILE_PATH: '${PROCESSED_ZIP_FILE_PATH}'"
+            addIndent
+            log "INFO: TABLE#: ${COUNTER}  =>  : LOAD FILE PATTERN FOR TABLE LOAD: '${TABLE_NAME_TO_FILE_PATTERN_MAP[${table_name}]}'"
+            curr_tgt_load_hdfs_dir="${TABLE_NAME_TO_HDFS_LOCATION_MAP[${table_name}]}/load_seq_nbr=${LOAD_SEQ_NBR}"
+            log "INFO: TABLE#: ${COUNTER}  =>  : TARGET HDFS DATA LOAD DIR: '${curr_tgt_load_hdfs_dir}' For Table: '${curr_load_complete_tbl_nm}'"
+            newline
+
+            # IS_TGT_HDFS_DIR_NONEMPTY = 0 : Dir Non Empty
+            # IS_TGT_HDFS_DIR_NONEMPTY = 1 : Dir Exists But Is Empty
+            # IS_TGT_HDFS_DIR_NONEMPTY = 2 : Dir Does Not Exists
+            IS_TGT_HDFS_DIR_NONEMPTY=2
+            fn_verify_tgt_hdfs_dir_isempty IS_TGT_HDFS_DIR_NONEMPTY  "${curr_tgt_load_hdfs_dir}"
+            if [[ ${IS_TGT_HDFS_DIR_NONEMPTY} -eq 0 ]]
+            then
+                if [[ ${flag_overwrite_hdfs_dir} == "TRUE" ]]; then
+                    log "WARNING: TABLE#: ${COUNTER}  =>  : FORCED OVERWRITING EXISTING NON-EMPTY DIR ENABLED. THIS MAY LEAD TO DATA LOSS"
+                    log "INFO: TABLE#: ${COUNTER}  =>  : Cleaning Target HDFS Dir As It Is Not Empty: hadoop fs -rm -f -r -skipTrash '${curr_tgt_load_hdfs_dir}/*'"
+                    log "WARNING: TABLE#: ${COUNTER}  =>  : WAIT FOR 10 secs BEFORE THE DIR CLEANUP"
+                    sleep 10
+                    hadoop fs -rm -f -r -skipTrash "${curr_tgt_load_hdfs_dir}/*"
+                else
+                    log "WARNING: TABLE#: ${COUNTER}  =>  : Cannot Overwrite Existing Non-Empty Dir As This May Lead To Data Loss"
+                    log "WARNING: TABLE#: ${COUNTER}  =>  : Rerun After Cleaning The HDFS Dir Using The Command: 'hadoop fs -rm -f -r -skipTrash \"${curr_tgt_load_hdfs_dir}\"'"
+                    log "WARNING: TABLE#: ${COUNTER}  =>  : Cannot Continue With The Run Unless Data Dir Is Empty. !!"
+                    exit 1
+                fi
+            fi
+            # Create target partition dir if it does not exists
+            if [[ ${IS_TGT_HDFS_DIR_NONEMPTY} -eq 2 ]]
+            then
+                log "INFO: TABLE#: ${COUNTER}  =>  : Creating Target Partition Dir As It Does Not Exists Using The Command: hadoop fs -mkdir -p '${curr_tgt_load_hdfs_dir}'"
+                hadoop fs -mkdir -p "${curr_tgt_load_hdfs_dir}"
+            fi
+
+            log "INFO: TABLE#: ${COUNTER}  =>  : Adding Target HDFS Data Directory: '${curr_tgt_load_hdfs_dir}' As Partition For Table: '${curr_load_complete_tbl_nm}'"
+            log "INFO: TABLE#: ${COUNTER}  =>  : Add Partition Using Command: impala-shell --ssl -k -i \"${IMPALA_HOSTNAME}\" -q \"ALTER TABLE ${curr_load_complete_tbl_nm} ADD IF NOT EXISTS PARTITION(load_seq_nbr=${LOAD_SEQ_NBR}) LOCATION '${curr_tgt_load_hdfs_dir}'\""
+
+            impala-shell --ssl -k -i "${IMPALA_HOSTNAME}" -q "ALTER TABLE ${curr_load_complete_tbl_nm} ADD IF NOT EXISTS PARTITION(load_seq_nbr=${LOAD_SEQ_NBR}) LOCATION '${curr_tgt_load_hdfs_dir}'"
+
+
+            log "INFO: TABLE#: ${COUNTER}  =>  : Move Unzipped Files Of Pattern: '${TABLE_NAME_TO_FILE_PATTERN_MAP[${table_name}]}' Present In Zip File: '${PROCESSED_ZIP_FILE_PATH}' To HDFS Using function: 'fn_move_from_local_to_hdfs'"
+	        newline
+	
+	        NUM_OF_FILES_MOVED_TO_HDFS=0
+	        fn_move_from_local_to_hdfs NUM_OF_FILES_MOVED_TO_HDFS "${curr_unzip_dir}" "${curr_tgt_load_hdfs_dir}" "${TABLE_NAME_TO_FILE_PATTERN_MAP[${table_name}]}"
+            log "INFO: TABLE#: ${COUNTER}  =>  : NUM_OF_FILES_MOVED_TO_HDFS='${NUM_OF_FILES_MOVED_TO_HDFS}' With Pattern: '${TABLE_NAME_TO_FILE_PATTERN_MAP[${table_name}]}' From Zip File: '${PROCESSED_ZIP_FILE_PATH}' Loaded For Table: '${curr_load_complete_tbl_nm}' Into Partition: 'load_seq_nbr=${LOAD_SEQ_NBR}'"
+
+            if [[ ${NUM_OF_FILES_MOVED_TO_HDFS} -gt 0 ]]
+            then
+                log "INFO: TABLE#: ${COUNTER}  =>  : Refreshing the Impala Table After The Load Completed For '${NUM_OF_FILES_MOVED_TO_HDFS}' Files"
+                log "INFO: TABLE#: ${COUNTER}  =>  : Using Following Command For Table Refresh: impala-shell --ssl -k -i \"${IMPALA_HOSTNAME}\" -q \"REFRESH ${curr_load_complete_tbl_nm}\""
+
+                impala-shell --ssl -k -i "${IMPALA_HOSTNAME}" -q "REFRESH ${curr_load_complete_tbl_nm}"
+
+                log "INFO: TABLE#: ${COUNTER}  =>  : Using Following To Get Number Of Records Loaded In Current Run: impala-shell --ssl -k -i \"${IMPALA_HOSTNAME}\" -q \"SELECT COUNT(*) FROM ${curr_load_complete_tbl_nm} WHERE LOAD_SEQ_NBR=${LOAD_SEQ_NBR}\""
+                impala-shell --ssl -k -i "${IMPALA_HOSTNAME}" -q "SELECT COUNT(*) FROM ${curr_load_complete_tbl_nm} WHERE LOAD_SEQ_NBR=${LOAD_SEQ_NBR}"
+            else
+                log "WARNING: TABLE#: ${COUNTER}  =>  : Zero Files Loaded For Table: '${curr_load_complete_tbl_nm}' Into Partition: 'load_seq_nbr=${LOAD_SEQ_NBR}'"
+            fi
+        
+	        newline
+	        subtractIndent
+	        (( COUNTER++ ))
+        fi
+    done
+    ARCHIVE_FILE_NAME="$( basename "${PROCESSED_ZIP_FILE_NAME}" ".zip" )-${__proc_run_dateid}.zip"
+    log "Moving Processed Zip File: '${PROCESSED_ZIP_FILE_PATH}' Into Archive: '${CURRENT_ARCHIVE_DIR}/${ARCHIVE_FILE_NAME}'"
+    mv "${PROCESSED_ZIP_FILE_PATH}" "${CURRENT_ARCHIVE_DIR}/${ARCHIVE_FILE_NAME}"
+    subtractIndent
+    subtractIndent
+    subtractIndent
+done    
+subtractIndent
+# <<< Main. <<<
+
+
+
+
+import sys
+import pandas as pd
+
+if len(sys.argv) != 2:
+    print("Incorrect number of paramters....Exiting CSV Parser")
+    print(sys.argv)
+    exit(1)
+
+input_csv_path = sys.argv[1]
+print(f'input_csv_path: {input_csv_path}')
+print(f'Begin File Parsing')
+with open(input_csv_path, 'rb') as reader:
+    df = pd.read_csv(reader, quotechar='"',warn_bad_lines=True, error_bad_lines=False)
+
+df.columns = df.columns.str.strip()
+df.columns = map(str.lower, df.columns)
+df.columns = df.columns.str.replace(' ', '_')
+
+df.replace(to_replace ="'\s*,\s*'", value = ',', regex = True, inplace=True)
+df.replace(to_replace ="(^\s*'\s*|\s*'\s*$)", value = '', regex=True, inplace=True)
+
+
+with open(input_csv_path, "w") as writer:
+    df.to_csv(writer, sep="~",index=False)
+
+print(f'End File Parsing: SUCCESS')
